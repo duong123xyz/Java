@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CheerpJ bootstrap probe</title>
+<style>body{background:#09090b;color:#e4e4e7;font:14px monospace;padding:20px}pre{white-space:pre-wrap}</style>
+<h2>CheerpJ bootstrap probe</h2><pre id="log"></pre>
+<script>
+const out=document.getElementById('log');
+const log=(x)=>{out.textContent+=x+'\n';console.log(x)};
+window.addEventListener('error',e=>log('window.error: '+e.message));
+window.addEventListener('unhandledrejection',e=>log('unhandledrejection: '+String(e.reason)));
+(async()=>{
+  const src='https://cjrtnc.leaningtech.com/4.3/loader.js';
+  log('topLevel='+(window.top===window));
+  log('secureContext='+window.isSecureContext);
+  log('crossOriginIsolated='+window.crossOriginIsolated);
+  log('loading '+src);
+  const s=document.createElement('script'); s.src=src;
+  await new Promise((res,rej)=>{s.onload=res;s.onerror=()=>rej(new Error('loader failed'));document.head.appendChild(s)});
+  log('loader ready; cheerpjInit='+typeof window.cheerpjInit);
+  const watchdog=setTimeout(()=>log('TIMEOUT: cheerpjInit has not resolved after 60s'),60000);
+  await window.cheerpjInit({version:8,status:'none',enableDebug:true,preloadProgress:(d,t)=>log(`preload ${d}/${t}`)});
+  clearTimeout(watchdog);
+  log('PASS: cheerpjInit resolved');
+})().catch(e=>log('FAIL: '+(e.stack||e.message||e)));
+</script>

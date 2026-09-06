@@ -8,6 +8,7 @@ import {
   Package,
   AlertTriangle,
   Gamepad2,
+  Loader2,
 } from 'lucide-react';
 import { LoadedJarSession } from './types/jar';
 import { loadAndAnalyzeJarSession } from './services/jarService';
@@ -18,25 +19,35 @@ import { JarExplorer } from './components/explorer/JarExplorer';
 import { ItemsBrowser } from './components/items/ItemsBrowser';
 import { TestGameTab } from './components/emulator/TestGameTab';
 import { getDirtyCount, discardAllDrafts } from './services/itemDraftService';
+import { buildLatestPatchedJarForTest } from './services/quickTestService';
 
 export default function App() {
   const [session, setSession] = useState<LoadedJarSession | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'explorer' | 'items' | 'test'>('overview');
   const [testGameSource, setTestGameSource] = useState<'ORIGINAL' | 'PATCHED'>('ORIGINAL');
+  // Incremented for every test launch so React never reuses an old emulator session.
+  const [testLaunchNonce, setTestLaunchNonce] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dirtyItemCount, setDirtyItemCount] = useState(0);
   const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
 
+  // One-click "edit -> rebuild -> verify -> test" state.
+  const [isQuickTesting, setIsQuickTesting] = useState(false);
+  const [quickTestMessage, setQuickTestMessage] = useState('');
+  const [quickTestError, setQuickTestError] = useState<string | null>(null);
+
   const handleFileSelect = async (file: File) => {
     setIsLoading(true);
     setErrorMessage(null);
+    setQuickTestError(null);
 
     try {
       const loadedSession = await loadAndAnalyzeJarSession(file);
       setSession(loadedSession);
       setActiveTab('overview');
       setDirtyItemCount(0);
+      setTestGameSource('ORIGINAL');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error loading JAR';
       setErrorMessage(message);
@@ -65,11 +76,56 @@ export default function App() {
     setIsLoading(false);
     setDirtyItemCount(0);
     setShowCloseConfirmModal(false);
+    setQuickTestError(null);
+    setQuickTestMessage('');
+    setIsQuickTesting(false);
+    setTestGameSource('ORIGINAL');
+  };
+
+  /**
+   * New behavior:
+   * - If there are in-memory item edits, clicking Test Game automatically rebuilds all current drafts,
+   *   validates the class rewrites, builds & verifies a patched JAR in RAM, then opens Test Game using it.
+   * - If there are no edits, it simply opens the original JAR.
+   * No download/re-upload round trip is required.
+   */
+  const handleTestGameClick = async () => {
+    if (!session || isQuickTesting) return;
+
+    const dirtyNow = getDirtyCount(session.itemDrafts);
+    setQuickTestError(null);
+
+    if (dirtyNow <= 0) {
+      setTestGameSource('ORIGINAL');
+      setTestLaunchNonce((n) => n + 1);
+      setActiveTab('test');
+      return;
+    }
+
+    setIsQuickTesting(true);
+    setQuickTestMessage('Đang chuẩn bị thay đổi mới nhất...');
+
+    try {
+      await buildLatestPatchedJarForTest(session, (progress) => {
+        setQuickTestMessage(progress.message);
+      });
+
+      // TestGameTab is mounted only after the verified candidate exists,
+      // so it receives the newest Patched JAR on first render.
+      setTestGameSource('PATCHED');
+      setTestLaunchNonce((n) => n + 1);
+      setActiveTab('test');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[Quick Test Latest Changes] Failed:', err);
+      setQuickTestError(message);
+    } finally {
+      setIsQuickTesting(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-500/20 selection:text-emerald-300">
-      {/* Top Application Header / Menu Bar */}
       <header className="border-b border-zinc-800/80 bg-zinc-900/90 sticky top-0 z-20 backdrop-blur">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -109,15 +165,12 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <div className="text-xs font-mono text-zinc-500">
-                Chế độ Client-Side Memory
-              </div>
+              <div className="text-xs font-mono text-zinc-500">Chế độ Client-Side Memory</div>
             )}
           </div>
         </div>
       </header>
 
-      {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6">
         {!session ? (
           <div className="pt-4 sm:pt-8">
@@ -129,9 +182,8 @@ export default function App() {
           </div>
         ) : (
           <div className="space-y-5">
-            {/* Navigation Tabs Bar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-zinc-800/80">
-              <div className="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800 w-fit">
+              <div className="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800 w-fit flex-wrap">
                 <button
                   id="tab-overview"
                   type="button"
@@ -188,22 +240,33 @@ export default function App() {
                   )}
                 </button>
 
-                {/* Step 12: Integrated J2ME Web Test Runner Tab */}
                 <button
                   id="tab-test-game"
                   type="button"
-                  onClick={() => setActiveTab('test')}
-                  className={`px-3.5 py-1.5 rounded-md text-xs font-mono flex items-center gap-2 transition-colors cursor-pointer ${
+                  onClick={handleTestGameClick}
+                  disabled={isQuickTesting}
+                  className={`px-3.5 py-1.5 rounded-md text-xs font-mono flex items-center gap-2 transition-colors cursor-pointer disabled:cursor-wait disabled:opacity-80 ${
                     activeTab === 'test'
                       ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                      : dirtyItemCount > 0
+                        ? 'bg-purple-500/10 text-purple-200 border border-purple-500/40 hover:bg-purple-500/20'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
                   }`}
+                  title={
+                    dirtyItemCount > 0
+                      ? 'Tự động rebuild thay đổi mới nhất trong RAM rồi chạy Patched JAR'
+                      : 'Chạy Original JAR'
+                  }
                 >
-                  <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Test Game</span>
-                  {session.candidateOutput?.status === 'VALIDATED' && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
-                      Patched
+                  {isQuickTesting ? (
+                    <Loader2 className="w-3.5 h-3.5 text-purple-300 animate-spin" />
+                  ) : (
+                    <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
+                  )}
+                  <span>{isQuickTesting ? 'Building latest...' : dirtyItemCount > 0 ? 'Test Latest Changes' : 'Test Game'}</span>
+                  {dirtyItemCount > 0 && !isQuickTesting && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/40 font-bold">
+                      auto rebuild
                     </span>
                   )}
                 </button>
@@ -224,7 +287,16 @@ export default function App() {
               </div>
             </div>
 
-            {/* Tab Views */}
+            {quickTestError && (
+              <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-800/70 text-red-200 font-mono text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold">Không thể chạy thay đổi mới nhất</div>
+                  <div className="mt-1 text-red-300/90 whitespace-pre-wrap">{quickTestError}</div>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'overview' ? (
               <div className="space-y-5">
                 <JarInfoPanel jarInfo={session.jarInfo} />
@@ -238,11 +310,13 @@ export default function App() {
                 onDraftsUpdated={(count) => setDirtyItemCount(count)}
                 onNavigateToTestGame={(src) => {
                   setTestGameSource(src);
+                  setTestLaunchNonce((n) => n + 1);
                   setActiveTab('test');
                 }}
               />
             ) : (
               <TestGameTab
+                key={`test-${testGameSource}-${session.candidateOutput?.validatedAt ?? 0}-${testLaunchNonce}`}
                 session={session}
                 initialSource={testGameSource}
                 onNavigateToPatchBuilder={() => setActiveTab('items')}
@@ -252,7 +326,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Confirmation Modal when Closing JAR with Unsaved In-Memory Changes */}
       {showCloseConfirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
@@ -269,7 +342,6 @@ export default function App() {
                 </p>
               </div>
             </div>
-
             <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800 font-mono">
               <button
                 type="button"
@@ -290,9 +362,30 @@ export default function App() {
         </div>
       )}
 
-      {/* Footer / Status bar */}
+      {isQuickTesting && (
+        <div className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-purple-500/40 bg-zinc-950 shadow-2xl p-5 font-mono">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center">
+                <Loader2 className="w-5 h-5 text-purple-300 animate-spin" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-zinc-100">Test Latest Changes</div>
+                <div className="text-[11px] text-zinc-500 mt-0.5">Draft → Patch Plan → Rewrite → Verify JAR → Run</div>
+              </div>
+            </div>
+            <div className="mt-4 p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-purple-200">
+              {quickTestMessage || 'Đang xử lý...'}
+            </div>
+            <div className="mt-3 text-[10px] text-zinc-500">
+              Không download, không upload lại. JAR mới chỉ được tạo và kiểm tra trong RAM.
+            </div>
+          </div>
+        </div>
+      )}
+
       <footer className="border-t border-zinc-800/60 bg-zinc-950 py-2.5 px-4 text-center text-[11px] font-mono text-zinc-500">
-        NRO Studio &bull; Step 08 &bull; In-Memory Item Editor Draft &bull; Client-side in-memory parser
+        NRO Studio &bull; One-Click Quick Test &bull; Draft → Verified Patched JAR → Emulator
       </footer>
     </div>
   );

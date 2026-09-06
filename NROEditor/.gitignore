@@ -1,8 +1,0 @@
-target/
-.idea/
-*.iml
-.vscode/
-output/*.jar
-output/**/*.jar
-!input/.gitkeep
-!output/.gitkeep

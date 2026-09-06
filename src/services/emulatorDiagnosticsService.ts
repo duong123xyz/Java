@@ -3,9 +3,18 @@ import {
   EmulatorAssetDiagnostic,
 } from '../types/emulator';
 
+const CHEERPJ_URL = 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js';
+const LOCAL_ASSETS = [
+  { name: 'NRO Emulator Runner', url: '/emulator/index.html' },
+  { name: 'FreeJ2ME Web JAR', url: '/emulator/core/freej2me-web.jar' },
+  { name: 'Canvas Graphics Native Bridge', url: '/emulator/core/libjs/libcanvasgraphics.js' },
+  { name: 'Media Native Bridge', url: '/emulator/core/libjs/libmediabridge.js' },
+  { name: 'LibMedia', url: '/emulator/core/libmedia/libmedia.js' },
+];
+
 export const INITIAL_DIAGNOSTICS: EmulatorDiagnosticsInfo = {
-  backend: 'CheerpJ + FreeJ2ME Web',
-  version: 'FreeJ2ME zb3 / CheerpJ 2026',
+  backend: 'CheerpJ + FreeJ2ME Web (NRO iframe runner)',
+  version: 'NRO runner fix v1 / CheerpJ 20260317_2978',
   cheerpjLoaded: false,
   freej2meLoaded: false,
   runtimeScriptLoaded: false,
@@ -29,40 +38,19 @@ export const INITIAL_DIAGNOSTICS: EmulatorDiagnosticsInfo = {
   selfTestStatus: 'IDLE',
   selfTestRootCause: undefined,
   assets: [
-    {
-      name: 'CheerpJ Loader CDN',
-      url: 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js',
+    { name: 'CheerpJ Loader CDN', url: CHEERPJ_URL, httpStatus: null, contentLength: null, status: 'PENDING' },
+    ...LOCAL_ASSETS.map((asset) => ({
+      ...asset,
       httpStatus: null,
       contentLength: null,
-      status: 'PENDING',
-    },
-    {
-      name: 'FreeJ2ME Web JAR',
-      url: '/emulator/core/freej2me-web.jar',
-      httpStatus: null,
-      contentLength: null,
-      status: 'PENDING',
-    },
-    {
-      name: 'FreeJ2ME Init ZIP',
-      url: '/emulator/core/init.zip',
-      httpStatus: null,
-      contentLength: null,
-      status: 'PENDING',
-    },
-    {
-      name: 'FreeJ2ME Main Module',
-      url: '/emulator/core/src/main.js',
-      httpStatus: null,
-      contentLength: null,
-      status: 'PENDING',
-    },
+      status: 'PENDING' as const,
+    })),
   ],
 };
 
 /**
- * Perform real HTTP Range request test (bytes=0-1) against local server asset.
- * If server returns 206 Partial Content, Range is supported.
+ * CheerpJ benefits from servers that honor Range requests. Test the actual local
+ * freej2me-web.jar instead of an unrelated placeholder asset.
  */
 export async function testHttpRangeSupport(): Promise<{
   supported: boolean;
@@ -71,142 +59,105 @@ export async function testHttpRangeSupport(): Promise<{
   error?: string;
 }> {
   try {
-    const testUrl = '/emulator/core/freej2me-web.jar';
-    const response = await fetch(testUrl, {
+    const response = await fetch('/emulator/core/freej2me-web.jar', {
       method: 'GET',
-      headers: {
-        Range: 'bytes=0-1',
-      },
+      headers: { Range: 'bytes=0-1' },
+      cache: 'no-cache',
     });
-
     const status = response.status;
     const contentRange = response.headers.get('content-range');
-    const is206 = status === 206;
-
     return {
-      supported: is206,
+      supported: status === 206,
       status,
       contentRange,
-      error: is206
-        ? undefined
-        : `Server returned HTTP ${status} instead of 206 Partial Content`,
+      error: status === 206 ? undefined : `Server returned HTTP ${status}, not 206 Partial Content`,
     };
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
     return {
       supported: false,
       status: 0,
       contentRange: null,
-      error: `Range test fetch exception: ${errorMsg}`,
+      error: `Range test failed: ${message}`,
     };
   }
 }
 
-/**
- * Diagnostics check for all required emulator assets.
- * Fetches status, headers and content-length without swallowing exceptions.
- */
-export async function testAllEmulatorAssets(): Promise<EmulatorAssetDiagnostic[]> {
-  const assetDefs = [
-    {
-      name: 'CheerpJ Loader CDN',
-      url: 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js',
-    },
-    {
-      name: 'FreeJ2ME Web JAR',
-      url: '/emulator/core/freej2me-web.jar',
-    },
-    {
-      name: 'FreeJ2ME Init ZIP',
-      url: '/emulator/core/init.zip',
-    },
-    {
-      name: 'FreeJ2ME Main Module',
-      url: '/emulator/core/src/main.js',
-    },
-  ];
-
-  const results: EmulatorAssetDiagnostic[] = [];
-
-  for (const def of assetDefs) {
+async function probeAsset(name: string, url: string): Promise<EmulatorAssetDiagnostic> {
+  try {
+    // HEAD is cheap, but some CDNs reject it. Fall back to a tiny GET/range request.
+    let response: Response;
     try {
-      const resp = await fetch(def.url, {
-        method: 'HEAD',
+      response = await fetch(url, { method: 'HEAD', cache: 'no-cache', mode: url.startsWith('http') ? 'cors' : 'same-origin' });
+      if (!response.ok && response.status !== 206) throw new Error(`HEAD HTTP ${response.status}`);
+    } catch (_) {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: url.includes('freej2me-web.jar') ? { Range: 'bytes=0-16' } : undefined,
         cache: 'no-cache',
-      }).catch(async () => {
-        // Fallback to GET with small slice if HEAD rejected by server/CDN
-        return await fetch(def.url, {
-          method: 'GET',
-          headers: { Range: 'bytes=0-10' },
-          cache: 'no-cache',
-        });
-      });
-
-      const contentLength = resp.headers.get('content-length')
-        ? parseInt(resp.headers.get('content-length')!, 10)
-        : null;
-
-      const isOk = resp.status >= 200 && resp.status < 400;
-
-      results.push({
-        name: def.name,
-        url: def.url,
-        httpStatus: resp.status,
-        contentLength,
-        status: isOk ? 'LOADED' : 'FAILED',
-        error: isOk ? undefined : `HTTP error ${resp.status} (${resp.statusText})`,
-      });
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      results.push({
-        name: def.name,
-        url: def.url,
-        httpStatus: 0,
-        contentLength: null,
-        status: 'FAILED',
-        error: `Network/CORS fetch error: ${errorMsg}`,
+        mode: url.startsWith('http') ? 'cors' : 'same-origin',
       });
     }
-  }
 
-  return results;
+    const ok = response.status >= 200 && response.status < 400;
+    const len = response.headers.get('content-length');
+    return {
+      name,
+      url,
+      httpStatus: response.status,
+      contentLength: len ? Number.parseInt(len, 10) : null,
+      status: ok ? 'LOADED' : 'FAILED',
+      error: ok ? undefined : `HTTP ${response.status} ${response.statusText}`,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      name,
+      url,
+      httpStatus: 0,
+      contentLength: null,
+      status: 'FAILED',
+      error: `Network/CORS fetch error: ${message}`,
+    };
+  }
 }
 
-/**
- * Tests Blob URL accessibility and FileReader in current execution context.
- */
+export async function testAllEmulatorAssets(): Promise<EmulatorAssetDiagnostic[]> {
+  const definitions = [
+    { name: 'CheerpJ Loader CDN', url: CHEERPJ_URL },
+    ...LOCAL_ASSETS,
+  ];
+  return Promise.all(definitions.map((asset) => probeAsset(asset.name, asset.url)));
+}
+
 export async function testBlobAndEnvironment(testBuffer?: ArrayBuffer): Promise<{
   blobAccessible: boolean;
   corsCspStatus: string;
   error?: string;
 }> {
+  let url: string | null = null;
   try {
-    const dummy = testBuffer || new Uint8Array([0x50, 0x4b, 0x03, 0x04]).buffer;
-    const testBlob = new Blob([dummy], { type: 'application/java-archive' });
-    const testUrl = URL.createObjectURL(testBlob);
-
-    const resp = await fetch(testUrl);
-    const readBuffer = await resp.arrayBuffer();
-    URL.revokeObjectURL(testUrl);
-
-    if (readBuffer.byteLength === dummy.byteLength) {
-      return {
-        blobAccessible: true,
-        corsCspStatus: 'Blob & ArrayBuffer fetch operational in context',
-      };
-    } else {
-      return {
-        blobAccessible: false,
-        corsCspStatus: 'Blob size mismatch in context',
-        error: 'Blob URL read byteLength does not match source buffer',
-      };
-    }
+    const source = testBuffer || new Uint8Array([0x50, 0x4b, 0x03, 0x04]).buffer;
+    const blob = new Blob([source], { type: 'application/java-archive' });
+    url = URL.createObjectURL(blob);
+    const response = await fetch(url);
+    const roundTrip = await response.arrayBuffer();
+    const ok = roundTrip.byteLength === source.byteLength;
+    return {
+      blobAccessible: ok,
+      corsCspStatus: ok
+        ? 'Blob + ArrayBuffer round-trip works in browser context'
+        : 'Blob round-trip byte length mismatch',
+      error: ok ? undefined : `Expected ${source.byteLength} bytes, received ${roundTrip.byteLength}`,
+    };
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
     return {
       blobAccessible: false,
-      corsCspStatus: `Blob access failed: ${msg}`,
-      error: msg,
+      corsCspStatus: `Blob access failed: ${message}`,
+      error: message,
     };
+  } finally {
+    if (url) URL.revokeObjectURL(url);
   }
 }
