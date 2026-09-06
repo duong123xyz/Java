@@ -4,14 +4,11 @@ import {
   AlertTriangle,
   FileCode,
   Sliders,
-  Eye,
   CheckCircle,
   Copy,
   Check,
   Table,
   Layers,
-  Info,
-  Sparkles,
 } from 'lucide-react';
 import { ItemRecord, ItemDraft } from '../../types/item';
 import { LoadedJarSession } from '../../types/jar';
@@ -19,7 +16,6 @@ import {
   ITEM_SCHEMA_FIELDS,
   validateFieldValue,
   findDuplicateIds,
-  getItemDraftKey,
 } from '../../services/itemDraftService';
 import { PatchPlanTab } from './PatchPlanTab';
 
@@ -53,19 +49,17 @@ export function ItemEditorForm({
     setTimeout(() => setCopiedField(null), 1800);
   };
 
-  // Duplicate ID warning check
   const currentDraftId = draft.values[0] ?? '';
   const duplicateLocations = useMemo(() => {
     return findDuplicateIds(currentDraftId, draft.key, allItems, drafts);
   }, [currentDraftId, draft.key, allItems, drafts]);
 
-  // Dirty fields info for comparison
   const changedFields = useMemo(() => {
     return draft.dirtyFields.map((colIdx) => {
       const meta = ITEM_SCHEMA_FIELDS[colIdx];
       return {
         colIndex: colIdx,
-        label: meta ? meta.label : `Col ${colIdx}`,
+        label: meta ? meta.label : `Cột ${colIdx}`,
         description: meta ? meta.description : '',
         original: draft.originalValues[colIdx] ?? '',
         current: draft.values[colIdx] ?? '',
@@ -73,7 +67,6 @@ export function ItemEditorForm({
     });
   }, [draft]);
 
-  // Groups
   const generalFields = ITEM_SCHEMA_FIELDS.filter((f) => f.group === 'general');
   const requirementsFields = ITEM_SCHEMA_FIELDS.filter((f) => f.group === 'requirements');
   const visualFields = ITEM_SCHEMA_FIELDS.filter((f) => f.group === 'visual');
@@ -86,7 +79,6 @@ export function ItemEditorForm({
     const originalValue = draft.originalValues[colIndex] ?? '';
     const isFieldDirty = draft.dirtyFields.includes(colIndex);
     const validationError = validateFieldValue(colIndex, value);
-
     const isLongText = meta.key === 'description';
 
     return (
@@ -102,14 +94,18 @@ export function ItemEditorForm({
           <label
             htmlFor={`field-input-${meta.key}`}
             className="text-[11px] font-mono font-medium text-zinc-300 flex items-center gap-1.5"
+            title={`${meta.key}: ${meta.description}`}
           >
             <span className="text-zinc-500 text-[10px]">#{colIndex}</span>
             <span className={isFieldDirty ? 'text-amber-300 font-bold' : 'text-zinc-200'}>
               {meta.label}
             </span>
+            <span className="text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-500" title="Tên trường kỹ thuật trong dữ liệu">
+              {meta.key}
+            </span>
             {meta.type === 'number' && (
               <span className="text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400">
-                numeric
+                số
               </span>
             )}
           </label>
@@ -117,7 +113,7 @@ export function ItemEditorForm({
           <div className="flex items-center gap-1.5">
             {isFieldDirty && (
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono font-semibold border border-amber-500/30">
-                Modified
+                Đã sửa
               </span>
             )}
             {isFieldDirty && (
@@ -125,10 +121,10 @@ export function ItemEditorForm({
                 type="button"
                 onClick={() => onResetField(colIndex)}
                 className="text-[10px] font-mono text-zinc-400 hover:text-amber-300 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700 cursor-pointer transition-colors"
-                title={`Revert ${meta.label} to original: "${originalValue}"`}
+                title={`Khôi phục ${meta.label} về giá trị gốc: "${originalValue}"`}
               >
                 <RotateCcw className="w-2.5 h-2.5" />
-                <span>Reset</span>
+                <span>Khôi phục</span>
               </button>
             )}
           </div>
@@ -164,7 +160,10 @@ export function ItemEditorForm({
           />
         )}
 
-        {/* Validation error message */}
+        <div className="mt-1 text-[10px] text-zinc-500 leading-relaxed">
+          {meta.description}
+        </div>
+
         {validationError && (
           <div className="mt-1 text-[11px] text-red-400 font-mono flex items-center gap-1">
             <AlertTriangle className="w-3 h-3 shrink-0" />
@@ -172,11 +171,10 @@ export function ItemEditorForm({
           </div>
         )}
 
-        {/* Previous original value indicator if modified */}
         {isFieldDirty && (
           <div className="mt-1 text-[10px] text-zinc-400 font-mono flex items-center justify-between">
             <span className="truncate">
-              Modified from: <strong className="text-zinc-300">&quot;{originalValue}&quot;</strong>
+              Giá trị gốc: <strong className="text-zinc-300">&quot;{originalValue}&quot;</strong>
             </span>
           </div>
         )}
@@ -186,7 +184,6 @@ export function ItemEditorForm({
 
   return (
     <div className="space-y-4">
-      {/* Item Top Bar */}
       <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
@@ -200,11 +197,11 @@ export function ItemEditorForm({
 
               {draft.isDirty ? (
                 <span className="px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-700/80 text-[11px] font-mono font-semibold flex items-center gap-1 animate-pulse">
-                  Modified ({draft.dirtyFields.length} field{draft.dirtyFields.length > 1 ? 's' : ''})
+                  Đã sửa ({draft.dirtyFields.length} trường)
                 </span>
               ) : (
                 <span className="px-2 py-0.5 rounded bg-emerald-950/50 text-emerald-400 border border-emerald-800/50 text-[11px] font-mono flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3" /> In-Memory Original
+                  <CheckCircle className="w-3 h-3" /> Dữ liệu gốc trong bộ nhớ
                 </span>
               )}
             </div>
@@ -220,10 +217,10 @@ export function ItemEditorForm({
                 type="button"
                 onClick={onResetItem}
                 className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-amber-300 text-xs font-mono flex items-center gap-1.5 border border-zinc-700 cursor-pointer transition-colors"
-                title="Reset toàn bộ thay đổi của item này về giá trị gốc trong JAR"
+                title="Khôi phục toàn bộ thay đổi của vật phẩm này về dữ liệu gốc trong JAR"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset Item</span>
+                <span>Khôi phục vật phẩm</span>
               </button>
             )}
 
@@ -231,7 +228,7 @@ export function ItemEditorForm({
               type="button"
               onClick={() => handleCopy(draft.values[0] || item.id, 'id')}
               className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs flex items-center gap-1 border border-zinc-750 cursor-pointer"
-              title="Copy Item ID"
+              title="Sao chép ID vật phẩm"
             >
               {copiedField === 'id' ? (
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -242,12 +239,11 @@ export function ItemEditorForm({
           </div>
         </div>
 
-        {/* Duplicate ID Diagnostic Warning */}
         {duplicateLocations.length > 0 && (
           <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-600/70 text-amber-200 text-xs font-mono space-y-1">
             <div className="flex items-center gap-1.5 font-bold text-amber-300">
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Duplicate item ID detected: &quot;{currentDraftId}&quot;</span>
+              <span>Phát hiện ID vật phẩm bị trùng: &quot;{currentDraftId}&quot;</span>
             </div>
             <p className="text-[11px] text-amber-200/80">
               ID này cũng đang được sử dụng tại {duplicateLocations.length} vị trí khác trong JAR:
@@ -258,14 +254,13 @@ export function ItemEditorForm({
                   key={dup.key}
                   className="px-2 py-0.5 rounded bg-amber-900/60 border border-amber-700 text-[10px] text-amber-100"
                 >
-                  {dup.sourceClass}:{dup.sourceRow} ({dup.name || 'no-name'})
+                  {dup.sourceClass}:{dup.sourceRow} ({dup.name || 'chưa có tên'})
                 </span>
               ))}
             </div>
           </div>
         )}
 
-        {/* Sub-tab view: Editor Form vs Diff Comparison */}
         <div className="flex items-center gap-2 pt-1 border-t border-zinc-800/80 text-xs font-mono">
           <button
             type="button"
@@ -277,7 +272,7 @@ export function ItemEditorForm({
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>15 Fields Editor</span>
+            <span>Chỉnh sửa 15 trường</span>
           </button>
 
           <button
@@ -290,7 +285,7 @@ export function ItemEditorForm({
             }`}
           >
             <Table className="w-3.5 h-3.5" />
-            <span>Compare (Original vs Draft)</span>
+            <span>So sánh (Gốc ↔ Bản nháp)</span>
             {draft.dirtyFields.length > 0 && (
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-bold">
                 {draft.dirtyFields.length}
@@ -308,7 +303,7 @@ export function ItemEditorForm({
             }`}
           >
             <FileCode className="w-3.5 h-3.5" />
-            <span>Patch Plan</span>
+            <span>Kế hoạch vá bytecode</span>
             {draft.dirtyFields.length > 0 && (
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-bold">
                 {draft.dirtyFields.length}
@@ -319,15 +314,13 @@ export function ItemEditorForm({
       </div>
 
       {activeSubTab === 'patch' ? (
-        /* Bytecode Evidence & Patch Plan Tab */
         <PatchPlanTab session={session} item={item} draft={draft} />
       ) : activeSubTab === 'diff' ? (
-        /* Compare Mode Panel */
         <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-mono font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-2">
               <Layers className="w-3.5 h-3.5 text-amber-400" />
-              <span>Original vs Draft Differences</span>
+              <span>Khác biệt giữa dữ liệu gốc và bản nháp</span>
             </h3>
             {draft.dirtyFields.length > 0 && (
               <button
@@ -336,24 +329,24 @@ export function ItemEditorForm({
                 className="text-[11px] font-mono text-zinc-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>Reset All to Original</span>
+                <span>Khôi phục tất cả về gốc</span>
               </button>
             )}
           </div>
 
           {changedFields.length === 0 ? (
             <div className="p-8 text-center text-xs font-mono text-zinc-500 border border-dashed border-zinc-800 rounded-lg">
-              Chưa có trường nào bị chỉnh sửa trong item này. Dữ liệu khớp 100% với JAR gốc.
+              Chưa có trường nào bị chỉnh sửa trong vật phẩm này. Dữ liệu khớp 100% với JAR gốc.
             </div>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-zinc-800">
               <table className="w-full text-left text-xs font-mono">
                 <thead className="bg-zinc-900 text-zinc-400 border-b border-zinc-800 text-[11px]">
                   <tr>
-                    <th className="px-3 py-2 w-32">FIELD</th>
-                    <th className="px-3 py-2">ORIGINAL VALUE</th>
-                    <th className="px-3 py-2">DRAFT VALUE</th>
-                    <th className="px-3 py-2 w-20 text-center">ACTION</th>
+                    <th className="px-3 py-2 w-32">TRƯỜNG</th>
+                    <th className="px-3 py-2">GIÁ TRỊ GỐC</th>
+                    <th className="px-3 py-2">GIÁ TRỊ BẢN NHÁP</th>
+                    <th className="px-3 py-2 w-20 text-center">THAO TÁC</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
@@ -362,17 +355,17 @@ export function ItemEditorForm({
                       <td className="px-3 py-2 font-bold text-amber-300">
                         {field.label}
                         <span className="text-[10px] text-zinc-500 block font-normal">
-                          col #{field.colIndex}
+                          cột #{field.colIndex}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-zinc-400 break-all font-mono">
                         <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800">
-                          {field.original || <span className="italic text-zinc-600">(empty)</span>}
+                          {field.original || <span className="italic text-zinc-600">(trống)</span>}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-amber-200 font-bold break-all font-mono">
                         <span className="px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800/60">
-                          {field.current || <span className="italic text-zinc-600">(empty)</span>}
+                          {field.current || <span className="italic text-zinc-600">(trống)</span>}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-center">
@@ -380,9 +373,9 @@ export function ItemEditorForm({
                           type="button"
                           onClick={() => onResetField(field.colIndex)}
                           className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-300 text-[10px] font-mono border border-zinc-700 cursor-pointer"
-                          title="Revert field to original"
+                          title="Khôi phục trường này về giá trị gốc"
                         >
-                          Reset
+                          Khôi phục
                         </button>
                       </td>
                     </tr>
@@ -393,64 +386,59 @@ export function ItemEditorForm({
           )}
         </div>
       ) : (
-        /* Desktop Grouped Editor Layout */
         <div className="space-y-4">
-          {/* GROUP 1: GENERAL */}
           <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
             <h3 className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-zinc-800/80">
               <span className="w-2 h-2 rounded-full bg-amber-400" />
-              <span>General Information</span>
+              <span>Thông tin chung</span>
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {generalFields.map((f) => renderFieldInput(f.index))}
             </div>
           </div>
 
-          {/* GROUP 2: REQUIREMENTS / VALUE */}
           <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
             <h3 className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-zinc-800/80">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Requirements &amp; Economy</span>
+              <span>Yêu cầu &amp; giá trị</span>
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {requirementsFields.map((f) => renderFieldInput(f.index))}
             </div>
           </div>
 
-          {/* GROUP 3: VISUAL & SPRITE */}
           <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
             <h3 className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-zinc-800/80">
               <span className="w-2 h-2 rounded-full bg-blue-400" />
-              <span>Visual &amp; Sprite Parts</span>
+              <span>Hiển thị &amp; sprite</span>
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {visualFields.map((f) => renderFieldInput(f.index))}
             </div>
           </div>
 
-          {/* SECTION 4: SOURCE TECHNICAL INFORMATION (READ-ONLY) */}
           <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3.5 space-y-2">
             <h3 className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
               <FileCode className="w-3.5 h-3.5 text-zinc-500" />
-              <span>Source Information (Read-Only)</span>
+              <span>Thông tin nguồn kỹ thuật (chỉ đọc)</span>
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
               <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">SOURCE CLASS</span>
+                <span className="text-zinc-500 text-[10px] block">CLASS NGUỒN</span>
                 <span className="text-zinc-200 font-bold truncate block" title={item.sourceClass}>
                   {item.sourceClass}.class
                 </span>
               </div>
               <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">SOURCE FIELD</span>
+                <span className="text-zinc-500 text-[10px] block">FIELD NGUỒN</span>
                 <span className="text-zinc-200 font-bold">{item.sourceField} ([[LString;)</span>
               </div>
               <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">SOURCE TABLE INDEX</span>
+                <span className="text-zinc-500 text-[10px] block">CHỈ SỐ BẢNG NGUỒN</span>
                 <span className="text-zinc-200 font-bold">#{item.sourceTableIndex}</span>
               </div>
               <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">SOURCE ROW</span>
+                <span className="text-zinc-500 text-[10px] block">DÒNG NGUỒN</span>
                 <span className="text-amber-400 font-bold">{item.sourceRow}</span>
               </div>
             </div>

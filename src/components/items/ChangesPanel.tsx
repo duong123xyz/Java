@@ -4,31 +4,23 @@ import {
   RotateCcw,
   Trash2,
   ChevronRight,
-  ChevronDown,
   AlertTriangle,
   Sparkles,
   Layers,
   FileCode,
-  Cpu,
   CheckCircle2,
   Share2,
   ShieldCheck,
   ShieldAlert,
-  ArrowRight,
   Play,
   FileCheck2,
-  Boxes,
   Binary,
-  Check,
-  Download,
-  PackageCheck,
-  RefreshCw,
 } from 'lucide-react';
 import { ItemDraft, ItemRecord } from '../../types/item';
 import { LoadedJarSession } from '../../types/jar';
 import { ITEM_SCHEMA_FIELDS, getItemDraftKey } from '../../services/itemDraftService';
 import { ItemFieldPatchPlan, ClassPatchGroup, ClassRewriteResult } from '../../types/patch';
-import { buildFieldPatchPlan, buildClassPatchGroups, getSessionClassInfo } from '../../services/patchPlannerService';
+import { buildFieldPatchPlan, buildClassPatchGroups } from '../../services/patchPlannerService';
 import { rewriteClass } from '../../services/classFileRewriter';
 import { runClassPreflight, PreflightCheckResult } from '../../services/classPreflightService';
 import {
@@ -71,13 +63,11 @@ export function ChangesPanel({
   const [rewritingGroup, setRewritingGroup] = useState<string | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
 
-  // Step 11: Build & Export Patched JAR states
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportResult, setExportResult] = useState<ExportValidationResult | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  // Invalidate rewrite previews and candidate output if drafts change
   useEffect(() => {
     setRewriteResults(new Map());
     setPreflightResults(new Map());
@@ -87,7 +77,6 @@ export function ChangesPanel({
     setExportProgress(null);
   }, [dirtyDrafts]);
 
-  // Map item records by draft key for quick lookup
   const itemRecordsByKey = useMemo(() => {
     const map = new Map<string, ItemRecord>();
     const list = allItems.length > 0 ? allItems : (session?.itemAnalysis?.items || []);
@@ -100,7 +89,6 @@ export function ChangesPanel({
     return map;
   }, [allItems, session?.itemAnalysis?.items]);
 
-  // Load patch plans for all dirty drafts (real-time live update)
   useEffect(() => {
     if (!session || dirtyDrafts.length === 0) {
       setPlansMap(new Map());
@@ -135,7 +123,7 @@ export function ChangesPanel({
               newPlans.set(planKey, plan);
             }
           } catch (e) {
-            console.error('Error generating plan in ChangesPanel:', e);
+            console.error('Lỗi khi tạo kế hoạch vá trong ChangesPanel:', e);
           }
         }
       }
@@ -147,13 +135,11 @@ export function ChangesPanel({
     }
 
     loadAllPlans();
-
     return () => {
       cancelled = true;
     };
   }, [session, dirtyDrafts, itemRecordsByKey, allItems]);
 
-  // Group plans by source class
   const classGroups = useMemo<ClassPatchGroup[]>(() => {
     const allPlansList: ItemFieldPatchPlan[] = Array.from(plansMap.values());
     return buildClassPatchGroups(allPlansList);
@@ -165,7 +151,6 @@ export function ChangesPanel({
     setRewriteError(null);
 
     try {
-      // Step 1: Run comprehensive preflight check on original class
       console.log(`[handleBuildRewritePreview] Running preflight on ${group.sourceClass}...`);
       const preflight = await runClassPreflight(session, group);
 
@@ -177,7 +162,6 @@ export function ChangesPanel({
 
       if (preflight.status !== 'PASS') {
         console.error(`[handleBuildRewritePreview] Preflight check FAILED for ${group.sourceClass}:`, preflight.reason);
-        // Clear any previous rewrite result for this group
         setRewriteResults((prev) => {
           const next = new Map(prev);
           next.delete(group.sourceClass);
@@ -186,7 +170,6 @@ export function ChangesPanel({
         return;
       }
 
-      // Step 2: Preflight PASS - Proceed with In-Memory Class Rewriter
       console.log(`[handleBuildRewritePreview] Preflight PASSED for ${group.sourceClass}. Executing in-memory rewrite...`);
       const result = await rewriteClass(
         preflight.originalBytes!,
@@ -202,7 +185,7 @@ export function ChangesPanel({
       });
     } catch (err: any) {
       console.error('[handleBuildRewritePreview] Rewrite error:', err);
-      setRewriteError(`PRE-FLIGHT: PASS\nREWRITE: FAIL\nReason: ${err.message || String(err)}`);
+      setRewriteError(`PRE-FLIGHT: PASS\nREWRITE: FAIL\nLý do: ${err.message || String(err)}`);
     } finally {
       setRewritingGroup(null);
     }
@@ -236,7 +219,7 @@ export function ChangesPanel({
         };
       } else if (result.status === 'FAILED') {
         setExportError(
-          result.failureReason || `Export verification thất bại tại giai đoạn ${result.failurePhase}`
+          result.failureReason || `Xác thực khi xuất JAR thất bại tại giai đoạn ${result.failurePhase}`
         );
       }
     } catch (err: any) {
@@ -267,7 +250,6 @@ export function ChangesPanel({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-        {/* Header */}
         <div className="px-5 py-4 bg-zinc-950/80 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
@@ -275,13 +257,13 @@ export function ChangesPanel({
             </div>
             <div>
               <h2 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-                <span>In-Memory Changes &amp; Patch Plans</span>
+                <span>Thay đổi trong RAM &amp; kế hoạch vá</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono border border-amber-500/40">
-                  {dirtyDrafts.length} items &bull; {totalModifiedCells} cells
+                  {dirtyDrafts.length} vật phẩm &bull; {totalModifiedCells} ô
                 </span>
               </h2>
               <p className="text-[11px] text-zinc-400">
-                Tất cả thay đổi chỉ nằm trong RAM. Dưới đây là Bytecode Evidence và Patch Plan dự kiến (chưa sửa JAR).
+                Tất cả thay đổi hiện chỉ nằm trong RAM. Bên dưới là bằng chứng bytecode và kế hoạch vá dự kiến, chưa ghi vào JAR.
               </p>
             </div>
           </div>
@@ -290,12 +272,12 @@ export function ChangesPanel({
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 cursor-pointer transition-colors"
+            title="Đóng bảng thay đổi"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Sub Navigation Bar */}
         <div className="px-5 py-2.5 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between text-xs font-mono">
           <div className="flex items-center gap-2">
             <button
@@ -307,7 +289,7 @@ export function ChangesPanel({
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
               }`}
             >
-              <span>Modified Items ({dirtyDrafts.length})</span>
+              <span>Vật phẩm đã sửa ({dirtyDrafts.length})</span>
             </button>
 
             <button
@@ -320,7 +302,7 @@ export function ChangesPanel({
               }`}
             >
               <FileCode className="w-3.5 h-3.5" />
-              <span>Class Patch Groups ({classGroups.length})</span>
+              <span>Nhóm class cần vá ({classGroups.length})</span>
             </button>
           </div>
 
@@ -331,20 +313,19 @@ export function ChangesPanel({
               className="px-2.5 py-1 rounded bg-red-950/40 hover:bg-red-950/80 text-red-300 border border-red-800/60 flex items-center gap-1.5 cursor-pointer transition-colors"
             >
               <Trash2 className="w-3 h-3" />
-              <span>Discard All</span>
+              <span>Hủy toàn bộ thay đổi</span>
             </button>
           )}
         </div>
 
-        {/* Discard Confirmation Banner */}
         {showDiscardConfirm && (
           <div className="p-4 bg-red-950/50 border-b border-red-800/70 text-red-200 text-xs font-mono space-y-2">
             <div className="flex items-center gap-2 font-bold text-red-300">
               <AlertTriangle className="w-4 h-4 text-red-400" />
-              <span>Xác nhận xóa toàn bộ thay đổi trong RAM?</span>
+              <span>Xác nhận hủy toàn bộ thay đổi trong RAM?</span>
             </div>
             <p className="text-[11px] text-red-300/80">
-              Tất cả {dirtyDrafts.length} item đã chỉnh sửa sẽ được hoàn tác về dữ liệu gốc ban đầu trong file JAR.
+              Tất cả {dirtyDrafts.length} vật phẩm đã chỉnh sửa sẽ được hoàn tác về dữ liệu gốc trong JAR.
             </p>
             <div className="flex items-center gap-2 pt-1">
               <button
@@ -352,43 +333,40 @@ export function ChangesPanel({
                 onClick={handleConfirmDiscard}
                 className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded font-bold cursor-pointer transition-colors"
               >
-                Xác nhận Discard
+                Xác nhận hủy thay đổi
               </button>
               <button
                 type="button"
                 onClick={() => setShowDiscardConfirm(false)}
                 className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded cursor-pointer transition-colors"
               >
-                Hủy bỏ
+                Giữ lại
               </button>
             </div>
           </div>
         )}
 
-        {/* Body List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
           {dirtyDrafts.length === 0 ? (
             <div className="py-12 text-center text-xs font-mono text-zinc-500 space-y-2">
               <Sparkles className="w-8 h-8 mx-auto text-zinc-600 opacity-50" />
-              <p>Chưa có item nào bị chỉnh sửa trong phiên hiện tại.</p>
+              <p>Chưa có vật phẩm nào bị chỉnh sửa trong phiên hiện tại.</p>
               <p className="text-[11px] text-zinc-600">
-                Hãy chọn bất kỳ item nào từ danh sách và chỉnh sửa các trường dữ liệu.
+                Chọn một vật phẩm từ danh sách và thay đổi các trường dữ liệu để bắt đầu.
               </p>
             </div>
           ) : activeView === 'groups' ? (
-            /* Class Patch Groups View (Step 09 Requirement 17) */
             <div className="space-y-3">
               <div className="p-3 bg-zinc-950/60 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-400">
                 <div className="flex items-center gap-2 text-zinc-200 font-bold mb-1">
                   <FileCode className="w-4 h-4 text-blue-400" />
-                  <span>Class Rebuild Grouping (Atomic Planning)</span>
+                  <span>Nhóm class để dựng lại an toàn</span>
                 </div>
                 <p className="text-[11px] text-zinc-500">
-                  Khi nhiều item cùng chung một class được sửa, hệ thống nhóm lại để Step sau rebuild class 1 lần duy nhất, tránh các plan cô lập ghi đè nhau.
+                  Khi nhiều vật phẩm trong cùng một class được sửa, hệ thống gom chúng lại để chỉ dựng lại class một lần, tránh các kế hoạch vá riêng lẻ ghi đè nhau.
                 </p>
               </div>
 
-              {/* Step 11: Export Patched JAR Control & Full Validation Panel */}
               <PatchedJarExportSection
                 classGroups={classGroups}
                 rewriteResults={rewriteResults}
@@ -421,10 +399,10 @@ export function ChangesPanel({
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-zinc-400 flex-wrap">
                         <span className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-750 text-zinc-300">
-                          {group.modifiedItemCount} item{group.modifiedItemCount > 1 ? 's' : ''}
+                          {group.modifiedItemCount} vật phẩm
                         </span>
                         <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30">
-                          {group.modifiedCellCount} modified cell{group.modifiedCellCount > 1 ? 's' : ''}
+                          {group.modifiedCellCount} ô đã sửa
                         </span>
                         <span
                           className={`px-2 py-0.5 rounded font-semibold border ${
@@ -433,7 +411,7 @@ export function ChangesPanel({
                               : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                           }`}
                         >
-                          {group.requiresRebuild ? 'Rebuild required' : 'In-place safe'}
+                          {group.requiresRebuild ? 'Cần dựng lại class' : 'Có thể vá tại chỗ'}
                         </span>
                       </div>
                     </div>
@@ -454,17 +432,17 @@ export function ChangesPanel({
                         {rewritingGroup === group.sourceClass ? (
                           <>
                             <div className="w-3.5 h-3.5 border-2 border-zinc-400 border-t-transparent rounded-full animate-spin" />
-                            <span>Rebuilding in RAM...</span>
+                            <span>Đang dựng lại trong RAM...</span>
                           </>
                         ) : rewriteResults.has(group.sourceClass) ? (
                           <>
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>Rebuild Preview (RAM)</span>
+                            <span>Dựng lại bản xem trước</span>
                           </>
                         ) : (
                           <>
                             <Play className="w-3.5 h-3.5 fill-current" />
-                            <span>Build Rewrite Preview</span>
+                            <span>Tạo bản dựng thử</span>
                           </>
                         )}
                       </button>
@@ -479,16 +457,15 @@ export function ChangesPanel({
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs flex items-center gap-1 cursor-pointer transition-colors"
                       >
-                        <span>Inspect</span>
+                        <span>Xem chi tiết</span>
                         <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
                       </button>
                     </div>
                   </div>
 
-                  {/* List of plans in this group */}
                   <div className="space-y-2">
                     <div className="text-[11px] text-zinc-500 font-semibold uppercase tracking-wider">
-                      Modified Cells:
+                      Các ô đã sửa:
                     </div>
                     <div className="divide-y divide-zinc-850 rounded-lg border border-zinc-800/80 overflow-hidden bg-zinc-900/60">
                       {group.plans.map((p) => (
@@ -502,7 +479,7 @@ export function ChangesPanel({
                         >
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-zinc-400 text-xs">
-                              row {p.sourceRow} / column {p.columnIndex} / <strong className="text-amber-300">{p.fieldName}</strong>
+                              dòng {p.sourceRow} / cột {p.columnIndex} / <strong className="text-amber-300">{p.fieldName}</strong>
                             </span>
                             <span
                               className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${
@@ -524,82 +501,77 @@ export function ChangesPanel({
                     </div>
                   </div>
 
-                  {/* PRE-FLIGHT DIAGNOSTICS: FAILED */}
                   {preflightResults.get(group.sourceClass)?.status === 'FAIL' && (() => {
                     const pf = preflightResults.get(group.sourceClass)!;
                     return (
                       <div className="p-3.5 bg-red-950/40 border border-red-800/80 rounded-xl space-y-2.5 font-mono text-xs text-red-200">
                         <div className="flex items-center gap-2 text-red-300 font-bold border-b border-red-900/60 pb-2">
                           <ShieldAlert className="w-4 h-4 text-red-400 shrink-0" />
-                          <span>PRE-FLIGHT FAILED</span>
+                          <span>KIỂM TRA TRƯỚC KHI VÁ THẤT BẠI</span>
                           <span className="text-[10px] px-2 py-0.5 rounded bg-red-900/60 text-red-200 border border-red-700 ml-auto font-bold">
-                            STEP: {pf.errorStep || 'BLOCKED'}
+                            BƯỚC: {pf.errorStep || 'BỊ CHẶN'}
                           </span>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] bg-red-950/60 p-2.5 rounded-lg border border-red-900/40">
-                          <div><span className="text-zinc-400">Exact Path:</span> <strong className="text-zinc-100">{pf.exactPath}</strong></div>
-                          <div><span className="text-zinc-400">Entry Found:</span> <strong className={pf.entryFound ? 'text-emerald-400' : 'text-red-400'}>{pf.entryFound ? 'YES' : 'NO'}</strong></div>
-                          <div><span className="text-zinc-400">Byte Length:</span> <strong className="text-zinc-100">{pf.byteLength} bytes</strong></div>
-                          <div><span className="text-zinc-400">Magic (CAFEBABE):</span> <strong className={pf.magicPass ? 'text-emerald-400' : 'text-red-400'}>{pf.magicHex} ({pf.magicPass ? 'PASS' : 'FAIL'})</strong></div>
-                          <div><span className="text-zinc-400">Class Parser:</span> <strong className={pf.classParsePass ? 'text-emerald-400' : 'text-red-400'}>{pf.classParsePass ? 'PASS' : 'FAIL'}</strong></div>
-                          <div><span className="text-zinc-400">&lt;clinit&gt; Method:</span> <strong className={pf.clinitFound ? 'text-emerald-400' : 'text-red-400'}>{pf.clinitFound ? 'FOUND' : 'MISSING'}</strong></div>
-                          <div><span className="text-zinc-400">Target Field ({pf.targetFieldName}):</span> <strong className={pf.targetFieldFound ? 'text-emerald-400' : 'text-red-400'}>{pf.targetFieldFound ? 'FOUND' : 'MISSING'}</strong></div>
-                          <div><span className="text-zinc-400">Table Reconstruction:</span> <strong className={pf.tableReconstructionPass ? 'text-emerald-400' : 'text-red-400'}>{pf.tableReconstructionPass ? 'PASS' : 'FAIL'}</strong></div>
+                          <div><span className="text-zinc-400">Đường dẫn:</span> <strong className="text-zinc-100">{pf.exactPath}</strong></div>
+                          <div><span className="text-zinc-400">Tìm thấy entry:</span> <strong className={pf.entryFound ? 'text-emerald-400' : 'text-red-400'}>{pf.entryFound ? 'CÓ' : 'KHÔNG'}</strong></div>
+                          <div><span className="text-zinc-400">Kích thước:</span> <strong className="text-zinc-100">{pf.byteLength} byte</strong></div>
+                          <div><span className="text-zinc-400">Magic (CAFEBABE):</span> <strong className={pf.magicPass ? 'text-emerald-400' : 'text-red-400'}>{pf.magicHex} ({pf.magicPass ? 'ĐẠT' : 'LỖI'})</strong></div>
+                          <div><span className="text-zinc-400">Bộ phân tích class:</span> <strong className={pf.classParsePass ? 'text-emerald-400' : 'text-red-400'}>{pf.classParsePass ? 'ĐẠT' : 'LỖI'}</strong></div>
+                          <div><span className="text-zinc-400">Hàm &lt;clinit&gt;:</span> <strong className={pf.clinitFound ? 'text-emerald-400' : 'text-red-400'}>{pf.clinitFound ? 'ĐÃ TÌM THẤY' : 'BỊ THIẾU'}</strong></div>
+                          <div><span className="text-zinc-400">Field đích ({pf.targetFieldName}):</span> <strong className={pf.targetFieldFound ? 'text-emerald-400' : 'text-red-400'}>{pf.targetFieldFound ? 'ĐÃ TÌM THẤY' : 'BỊ THIẾU'}</strong></div>
+                          <div><span className="text-zinc-400">Phục dựng bảng:</span> <strong className={pf.tableReconstructionPass ? 'text-emerald-400' : 'text-red-400'}>{pf.tableReconstructionPass ? 'ĐẠT' : 'LỖI'}</strong></div>
                         </div>
 
                         <div className="p-2.5 rounded-lg bg-black/50 border border-red-900/60 text-xs text-red-200">
-                          <span className="text-red-400 font-bold block mb-1">Failure Reason:</span>
+                          <span className="text-red-400 font-bold block mb-1">Lý do thất bại:</span>
                           <p className="whitespace-pre-wrap font-mono text-[11px] text-red-300">{pf.reason}</p>
                         </div>
                       </div>
                     );
                   })()}
 
-                  {/* PRE-FLIGHT SUMMARY: PASSED */}
                   {preflightResults.get(group.sourceClass)?.status === 'PASS' && (() => {
                     const pf = preflightResults.get(group.sourceClass)!;
                     return (
                       <div className="p-2.5 bg-emerald-950/25 border border-emerald-800/50 rounded-lg text-xs font-mono text-emerald-300 flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                          <span className="font-bold">Original class preflight: PASS</span>
+                          <span className="font-bold">Kiểm tra class gốc: ĐẠT</span>
                           <span className="text-[10px] text-zinc-400">({pf.exactPath})</span>
                         </div>
                         <div className="flex items-center gap-3 text-[10px] text-zinc-400 flex-wrap">
-                          <span>Entry: <strong className="text-emerald-400">YES</strong></span>
-                          <span>Bytes: <strong className="text-zinc-200">{pf.byteLength}B</strong></span>
-                          <span>CAFEBABE: <strong className="text-emerald-400">PASS</strong></span>
-                          <span>Parser: <strong className="text-emerald-400">PASS</strong></span>
-                          <span>Internal: <strong className="text-zinc-200">{pf.internalClass}</strong></span>
-                          <span>Table ({pf.targetFieldName}): <strong className="text-emerald-400">{pf.reconstructedRowCount} rows</strong></span>
-                          <span>Evidence: <strong className="text-emerald-400">PASS</strong></span>
+                          <span>Entry: <strong className="text-emerald-400">CÓ</strong></span>
+                          <span>Byte: <strong className="text-zinc-200">{pf.byteLength}B</strong></span>
+                          <span>CAFEBABE: <strong className="text-emerald-400">ĐẠT</strong></span>
+                          <span>Parser: <strong className="text-emerald-400">ĐẠT</strong></span>
+                          <span>Class nội bộ: <strong className="text-zinc-200">{pf.internalClass}</strong></span>
+                          <span>Bảng ({pf.targetFieldName}): <strong className="text-emerald-400">{pf.reconstructedRowCount} dòng</strong></span>
+                          <span>Bằng chứng: <strong className="text-emerald-400">ĐẠT</strong></span>
                         </div>
                       </div>
                     );
                   })()}
 
-                  {/* REWRITE ERROR (IF PREFLIGHT PASSED BUT REWRITE FAILED) */}
                   {rewriteError && (
                     <div className="p-3 bg-red-950/50 border border-red-800 rounded-lg text-xs font-mono text-red-200 space-y-1">
                       <div className="flex items-center gap-2 text-red-400 font-bold">
                         <ShieldAlert className="w-4 h-4" />
-                        <span>REWRITE EXECUTION ERROR</span>
+                        <span>LỖI KHI THỰC THI DỰNG LẠI CLASS</span>
                       </div>
                       <pre className="whitespace-pre-wrap text-[11px] text-red-300">{rewriteError}</pre>
                     </div>
                   )}
 
-                  {/* IN-MEMORY REWRITE PREVIEW SECTION */}
                   {rewriteResults.get(group.sourceClass) && (() => {
                     const rewriteResult = rewriteResults.get(group.sourceClass)!;
                     return (
                       <div className="p-3.5 bg-zinc-900 border border-zinc-700/80 rounded-xl space-y-3 font-mono text-xs">
-                        {/* Preview Header & Status */}
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2.5">
                           <div className="flex items-center gap-2">
                             <Binary className="w-4 h-4 text-emerald-400" />
-                            <span className="font-bold text-zinc-100">In-Memory Class Rewrite Preview</span>
+                            <span className="font-bold text-zinc-100">Bản xem trước class đã dựng lại trong RAM</span>
                             <span
                               className={`text-[10px] px-2 py-0.5 rounded font-bold border ${
                                 rewriteResult.status === 'VALIDATED'
@@ -607,17 +579,17 @@ export function ChangesPanel({
                                   : 'bg-red-500/20 text-red-300 border-red-500/40'
                               }`}
                             >
-                              {rewriteResult.status === 'VALIDATED' ? 'VALIDATED (PASS)' : 'REWRITE FAILED'}
+                              {rewriteResult.status === 'VALIDATED' ? 'ĐÃ XÁC THỰC' : 'DỰNG LẠI THẤT BẠI'}
                             </span>
                           </div>
 
                           <div className="flex items-center gap-2 text-[10px] text-zinc-400">
                             <span className="flex items-center gap-1 text-emerald-400 font-semibold">
                               <ShieldCheck className="w-3.5 h-3.5" />
-                              Original JAR Immutable
+                              JAR gốc không bị thay đổi
                             </span>
                             <span>&bull;</span>
-                            <span className="text-zinc-500">JSZip unmutated</span>
+                            <span className="text-zinc-500">JSZip chưa bị sửa</span>
                           </div>
                         </div>
 
@@ -631,60 +603,58 @@ export function ChangesPanel({
                           </div>
                         )}
 
-                        {/* Metrics Grid */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                           <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800">
-                            <span className="text-zinc-500 block text-[10px]">Class Size</span>
+                            <span className="text-zinc-500 block text-[10px]">Kích thước class</span>
                             <div className="flex items-center gap-1 text-zinc-200 font-bold">
                               <span>{rewriteResult.metrics.originalClassSize}B &rarr; {rewriteResult.metrics.rewrittenClassSize}B</span>
                             </div>
                             <span className="text-[10px] text-zinc-400">
-                              Delta: {rewriteResult.metrics.sizeDelta >= 0 ? `+${rewriteResult.metrics.sizeDelta}` : rewriteResult.metrics.sizeDelta}B
+                              Chênh lệch: {rewriteResult.metrics.sizeDelta >= 0 ? `+${rewriteResult.metrics.sizeDelta}` : rewriteResult.metrics.sizeDelta}B
                             </span>
                           </div>
 
                           <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800">
-                            <span className="text-zinc-500 block text-[10px]">Constant Pool Count</span>
+                            <span className="text-zinc-500 block text-[10px]">Số phần tử Constant Pool</span>
                             <div className="flex items-center gap-1 text-zinc-200 font-bold">
                               <span>{rewriteResult.metrics.originalCpCount} &rarr; {rewriteResult.metrics.rewrittenCpCount}</span>
                             </div>
                             <span className="text-[10px] text-zinc-400">
-                              Added: {rewriteResult.metrics.cpEntriesAdded >= 0 ? `+${rewriteResult.metrics.cpEntriesAdded}` : rewriteResult.metrics.cpEntriesAdded} entries
+                              Thêm: {rewriteResult.metrics.cpEntriesAdded >= 0 ? `+${rewriteResult.metrics.cpEntriesAdded}` : rewriteResult.metrics.cpEntriesAdded} phần tử
                             </span>
                           </div>
 
                           <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800">
-                            <span className="text-zinc-500 block text-[10px]">&lt;clinit&gt; Code Length</span>
+                            <span className="text-zinc-500 block text-[10px]">Độ dài mã &lt;clinit&gt;</span>
                             <div className="flex items-center gap-1 text-zinc-200 font-bold">
                               <span>{rewriteResult.metrics.originalCodeLength}B &rarr; {rewriteResult.metrics.rewrittenCodeLength}B</span>
                             </div>
                             <span className="text-[10px] text-zinc-400">
-                              Delta: {rewriteResult.metrics.codeLengthDelta >= 0 ? `+${rewriteResult.metrics.codeLengthDelta}` : rewriteResult.metrics.codeLengthDelta}B
+                              Chênh lệch: {rewriteResult.metrics.codeLengthDelta >= 0 ? `+${rewriteResult.metrics.codeLengthDelta}` : rewriteResult.metrics.codeLengthDelta}B
                             </span>
                           </div>
 
                           <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800">
-                            <span className="text-zinc-500 block text-[10px]">Instruction Resizing</span>
+                            <span className="text-zinc-500 block text-[10px]">Lệnh phải đổi kích thước</span>
                             <div className="flex items-center gap-1 text-zinc-200 font-bold">
-                              <span>{rewriteResult.metrics.instructionsResized} resized</span>
+                              <span>{rewriteResult.metrics.instructionsResized} lệnh</span>
                             </div>
                             <span className="text-[10px] text-zinc-400">
-                              {rewriteResult.metrics.instructionsResized === 0 ? 'Preserved length' : 'ldc -> ldc_w'}
+                              {rewriteResult.metrics.instructionsResized === 0 ? 'Giữ nguyên độ dài' : 'ldc → ldc_w'}
                             </span>
                           </div>
                         </div>
 
-                        {/* Applied Plans with Exact Strategy Details */}
                         <div className="space-y-1.5">
                           <div className="text-[11px] text-zinc-400 font-bold flex items-center justify-between">
-                            <span>Applied Patches &amp; Constant Strategies ({rewriteResult.appliedPlans.length}):</span>
+                            <span>Các bản vá đã áp dụng và chiến lược constant ({rewriteResult.appliedPlans.length}):</span>
                           </div>
                           <div className="space-y-1.5">
                             {rewriteResult.appliedPlans.map((ap, i) => (
                               <div key={i} className="p-2 rounded-lg bg-zinc-950 border border-zinc-800 space-y-1">
                                 <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
                                   <span className="text-zinc-200 font-bold">
-                                    Row {ap.sourceRow} / Col {ap.columnIndex} ({ap.fieldName})
+                                    Dòng {ap.sourceRow} / Cột {ap.columnIndex} ({ap.fieldName})
                                   </span>
                                   <span
                                     className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${
@@ -711,39 +681,37 @@ export function ChangesPanel({
                           </div>
                         </div>
 
-                        {/* Exact Semantic Diff Verification */}
                         <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2">
                           <div className="flex items-center justify-between text-xs flex-wrap gap-1">
                             <div className="flex items-center gap-1.5 font-bold text-zinc-200">
                               <FileCheck2 className="w-4 h-4 text-blue-400" />
-                              <span>Semantic Table Validation (String[][] u)</span>
+                              <span>Xác thực bảng dữ liệu sau khi dựng lại (String[][] u)</span>
                             </div>
                             <div className="flex items-center gap-2 text-[10px]">
                               <span className="text-zinc-400">
-                                Expected: <strong className="text-zinc-200">{rewriteResult.expectedChangedCount}</strong>
+                                Dự kiến: <strong className="text-zinc-200">{rewriteResult.expectedChangedCount}</strong>
                               </span>
                               <span>&bull;</span>
                               <span className="text-zinc-400">
-                                Actual: <strong className="text-zinc-200">{rewriteResult.actualChangedCount}</strong>
+                                Thực tế: <strong className="text-zinc-200">{rewriteResult.actualChangedCount}</strong>
                               </span>
                               <span>&bull;</span>
                               <span className={rewriteResult.unexpectedChangedCount === 0 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                                Side-effects: {rewriteResult.unexpectedChangedCount}
+                                Ngoài dự kiến: {rewriteResult.unexpectedChangedCount}
                               </span>
                             </div>
                           </div>
 
-                          {/* Semantic Diffs Table */}
                           <div className="rounded border border-zinc-800/80 overflow-hidden">
                             <table className="w-full text-left text-[11px]">
                               <thead className="bg-zinc-900 text-zinc-400 font-semibold">
                                 <tr>
-                                  <th className="py-1 px-2">ROW</th>
-                                  <th className="py-1 px-2">COL</th>
-                                  <th className="py-1 px-2">FIELD</th>
-                                  <th className="py-1 px-2">ORIGINAL</th>
-                                  <th className="py-1 px-2">REWRITTEN</th>
-                                  <th className="py-1 px-2 text-right">EXPECTED</th>
+                                  <th className="py-1 px-2">DÒNG</th>
+                                  <th className="py-1 px-2">CỘT</th>
+                                  <th className="py-1 px-2">TRƯỜNG</th>
+                                  <th className="py-1 px-2">GIÁ TRỊ GỐC</th>
+                                  <th className="py-1 px-2">SAU KHI DỰNG LẠI</th>
+                                  <th className="py-1 px-2 text-right">ĐÚNG DỰ KIẾN</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-zinc-850">
@@ -756,9 +724,9 @@ export function ChangesPanel({
                                     <td className="py-1 px-2 text-emerald-400 font-bold truncate max-w-[100px]">{diff.rewrittenValue}</td>
                                     <td className="py-1 px-2 text-right">
                                       {diff.expected ? (
-                                        <span className="text-emerald-400 font-bold">YES</span>
+                                        <span className="text-emerald-400 font-bold">CÓ</span>
                                       ) : (
-                                        <span className="text-red-400 font-bold">NO (UNEXPECTED)</span>
+                                        <span className="text-red-400 font-bold">KHÔNG — BẤT THƯỜNG</span>
                                       )}
                                     </td>
                                   </tr>
@@ -771,24 +739,22 @@ export function ChangesPanel({
                     );
                   })()}
 
-                  {/* READ-ONLY footer */}
                   <div className="flex items-center justify-between pt-1 text-[11px] text-zinc-500 border-t border-zinc-850">
                     <span className="flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
-                      READ-ONLY Group • Chưa thực hiện rebuild hay chỉnh sửa JAR
+                      Chỉ xem trước • Chưa ghi thay đổi vào JAR
                     </span>
                     <span className="text-zinc-500 text-[10px]">
-                      Shared: {group.sharedConstantsCount} &bull; Unique: {group.uniqueConstantsCount}
+                      Constant dùng chung: {group.sharedConstantsCount} &bull; Constant riêng: {group.uniqueConstantsCount}
                     </span>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            /* Modified Items List (Requirement 16) */
             dirtyDrafts.map((draft) => {
-              const currentId = draft.values[0] || '(no-id)';
-              const currentName = draft.values[3] || '(no-name)';
+              const currentId = draft.values[0] || '(không có ID)';
+              const currentName = draft.values[3] || '(chưa có tên)';
 
               return (
                 <div
@@ -807,13 +773,13 @@ export function ChangesPanel({
                       </div>
 
                       <div className="text-[11px] font-mono text-zinc-400 flex items-center gap-2 flex-wrap">
-                        <span className="text-zinc-500">Source:</span>
+                        <span className="text-zinc-500">Nguồn:</span>
                         <span className="text-zinc-300 font-bold">
                           {draft.sourceClass}:{draft.sourceRow}
                         </span>
                         <span className="text-zinc-600">&bull;</span>
                         <span className="text-amber-400">
-                          {draft.dirtyFields.length} modified field{draft.dirtyFields.length > 1 ? 's' : ''}
+                          {draft.dirtyFields.length} trường đã sửa
                         </span>
                       </div>
                     </div>
@@ -823,10 +789,10 @@ export function ChangesPanel({
                         type="button"
                         onClick={() => onResetItem(draft.key)}
                         className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-300 text-xs font-mono flex items-center gap-1 border border-zinc-750 cursor-pointer transition-colors"
-                        title="Hoàn tác thay đổi của item này"
+                        title="Khôi phục thay đổi của vật phẩm này"
                       >
                         <RotateCcw className="w-3 h-3" />
-                        <span>Reset</span>
+                        <span>Khôi phục</span>
                       </button>
 
                       <button
@@ -836,24 +802,23 @@ export function ChangesPanel({
                           onClose();
                         }}
                         className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-mono flex items-center gap-1.5 cursor-pointer font-semibold transition-colors"
-                        title="Xem Patch Plan và chỉnh sửa item này"
+                        title="Xem kế hoạch vá và chỉnh sửa vật phẩm này"
                       >
-                        <span>Inspect &amp; Plan</span>
+                        <span>Xem &amp; lập kế hoạch</span>
                         <ChevronRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Modified Fields with Patch Plan Status Badges (Requirement 16) */}
                   <div className="pt-2 border-t border-zinc-800/80 space-y-1.5">
                     <span className="text-[10px] text-zinc-500 uppercase tracking-wider block font-mono">
-                      Modified Fields &amp; Bytecode Status:
+                      Các trường đã sửa &amp; trạng thái bytecode:
                     </span>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-xs">
                       {draft.dirtyFields.map((colIdx) => {
                         const meta = ITEM_SCHEMA_FIELDS[colIdx];
-                        const label = meta ? meta.label : `col#${colIdx}`;
+                        const label = meta ? meta.label : `cột #${colIdx}`;
                         const planKey = `${draft.key}|${colIdx}`;
                         const plan = plansMap.get(planKey);
 
@@ -875,7 +840,6 @@ export function ChangesPanel({
                                 {label}
                               </span>
 
-                              {/* Status Badge */}
                               {plan ? (
                                 <span
                                   className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${
@@ -888,14 +852,14 @@ export function ChangesPanel({
                                       : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
                                   }`}
                                 >
-                                  {plan.riskLevel === 'SAFE_TO_PLAN' && 'Plan ready'}
-                                  {plan.riskLevel === 'NEEDS_REBUILD' && 'Needs rebuild'}
-                                  {plan.riskLevel === 'UNSUPPORTED' && 'Unsupported'}
-                                  {plan.riskLevel === 'AMBIGUOUS' && 'Ambiguous'}
+                                  {plan.riskLevel === 'SAFE_TO_PLAN' && 'Sẵn sàng lập kế hoạch'}
+                                  {plan.riskLevel === 'NEEDS_REBUILD' && 'Cần dựng lại'}
+                                  {plan.riskLevel === 'UNSUPPORTED' && 'Chưa hỗ trợ'}
+                                  {plan.riskLevel === 'AMBIGUOUS' && 'Chưa rõ ràng'}
                                 </span>
                               ) : (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">
-                                  {loadingPlans ? 'Analyzing...' : 'Plan ready'}
+                                  {loadingPlans ? 'Đang phân tích...' : 'Sẵn sàng lập kế hoạch'}
                                 </span>
                               )}
                             </div>
@@ -914,7 +878,7 @@ export function ChangesPanel({
                                 {plan.isShared && (
                                   <span className="text-purple-400 font-semibold flex items-center gap-0.5">
                                     <Share2 className="w-2.5 h-2.5" />
-                                    Shared ({plan.tableCellUsageCount})
+                                    Dùng chung ({plan.tableCellUsageCount})
                                   </span>
                                 )}
                               </div>
@@ -930,9 +894,8 @@ export function ChangesPanel({
           )}
         </div>
 
-        {/* Footer */}
         <div className="px-5 py-3 bg-zinc-950/80 border-t border-zinc-800 flex items-center justify-between text-[11px] font-mono text-zinc-500">
-          <span>NRO Studio Bytecode Evidence &amp; Patch Planner Layer</span>
+          <span>NRO Studio — Bằng chứng bytecode &amp; công cụ lập kế hoạch vá</span>
           <button
             type="button"
             onClick={onClose}

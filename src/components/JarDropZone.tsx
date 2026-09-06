@@ -18,9 +18,7 @@ export const JarDropZone: React.FC<JarDropZoneProps> = ({
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isLoading) {
-      setIsDragOver(true);
-    }
+    if (!isLoading) setIsDragOver(true);
   };
 
   const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
@@ -33,24 +31,17 @@ export const JarDropZone: React.FC<JarDropZoneProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-
     if (isLoading) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
-      if (file.name.toLowerCase().endsWith('.jar')) {
-        onFileSelect(file);
-      } else {
-        alert('Vui lòng chỉ chọn file .jar');
-      }
+      if (file.name.toLowerCase().endsWith('.jar')) onFileSelect(file);
+      else alert('Vui lòng chỉ chọn file .jar');
     }
   };
 
   const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0];
-      onFileSelect(file);
-    }
+    if (e.target.files && e.target.files.length > 0) onFileSelect(e.target.files[0]);
   };
 
   const triggerBrowse = () => {
@@ -67,10 +58,10 @@ export const JarDropZone: React.FC<JarDropZoneProps> = ({
           <div className="flex items-center gap-2">
             <FileCode2 className="w-4 h-4 text-zinc-400" />
             <h2 className="text-sm font-semibold text-zinc-200 tracking-wide uppercase">
-              Open Game JAR
+              Mở file game JAR
             </h2>
           </div>
-          <span className="text-xs font-mono text-zinc-500">Read-Only Inspection</span>
+          <span className="text-xs font-mono text-zinc-500">Phân tích an toàn trong RAM</span>
         </div>
 
         <div className="p-6">
@@ -107,16 +98,12 @@ export const JarDropZone: React.FC<JarDropZoneProps> = ({
                 <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-4 text-zinc-300">
                   <Upload className="w-6 h-6" />
                 </div>
-                <p className="text-base font-medium text-zinc-200 mb-1">
-                  Drop .jar file here
-                </p>
-                <p className="text-xs text-zinc-500 mb-4">
-                  hoặc kéo thả file game J2ME (.jar) vào đây
-                </p>
+                <p className="text-base font-medium text-zinc-200 mb-1">Thả file .jar vào đây</p>
+                <p className="text-xs text-zinc-500 mb-4">hoặc bấm để chọn file game J2ME (.jar)</p>
                 <button
                   id="browse-jar-button"
                   type="button"
-                  onClick={(e) => {
+                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                     e.stopPropagation();
                     triggerBrowse();
                   }}
@@ -125,22 +112,17 @@ export const JarDropZone: React.FC<JarDropZoneProps> = ({
                   [ Chọn file JAR ]
                 </button>
                 <p className="text-[11px] text-zinc-500 mt-3 font-mono">
-                  Chỉ chấp nhận file định dạng: *.jar (ví dụ: NgocRongChay-v1.3.8.jar)
+                  Chỉ chấp nhận *.jar, ví dụ: NgocRongChay-v1.3.8.jar
                 </p>
               </>
             )}
           </div>
 
           {errorMessage && (
-            <div
-              id="jar-error-alert"
-              className="mt-4 p-3.5 bg-red-950/40 border border-red-900/60 rounded-md flex items-start gap-3"
-            >
+            <div id="jar-error-alert" className="mt-4 p-3.5 bg-red-950/40 border border-red-900/60 rounded-md flex items-start gap-3">
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
               <div>
-                <p className="text-xs font-semibold text-red-300">
-                  Status: Invalid or unsupported JAR
-                </p>
+                <p className="text-xs font-semibold text-red-300">Trạng thái: JAR không hợp lệ hoặc chưa được hỗ trợ</p>
                 <p className="text-xs text-red-400/90 mt-0.5 font-mono">{errorMessage}</p>
               </div>
             </div>

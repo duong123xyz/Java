@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search,
-  Database,
   AlertTriangle,
   Table,
   RefreshCw,
@@ -10,7 +9,6 @@ import {
   Sparkles,
   ChevronLeft,
   Layers,
-  RotateCcw,
 } from 'lucide-react';
 import { LoadedJarSession } from '../../types/jar';
 import {
@@ -30,6 +28,7 @@ import {
   getDirtyCount,
   getDirtyDrafts,
   getEffectiveItem,
+  ITEM_SCHEMA_FIELDS,
 } from '../../services/itemDraftService';
 import { ItemEditorForm } from './ItemEditorForm';
 import { ChangesPanel } from './ChangesPanel';
@@ -43,7 +42,6 @@ interface ItemsBrowserProps {
 const PAGE_SIZE = 50;
 
 export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }: ItemsBrowserProps) {
-  // Ensure itemDrafts map exists on session
   if (!session.itemDrafts) {
     session.itemDrafts = new Map<string, ItemDraft>();
   }
@@ -54,23 +52,17 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
   const [isLoading, setIsLoading] = useState<boolean>(!session.itemAnalysis);
   const [progress, setProgress] = useState<ItemAnalysisProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('all');
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showChangesModal, setShowChangesModal] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-
-  // Draft revision ticker to trigger React re-renders when drafts mutate
   const [draftRevision, setDraftRevision] = useState(0);
 
   const notifyDraftsChange = useCallback(() => {
     const dirtyCount = getDirtyCount(session.itemDrafts);
-    if (onDraftsUpdated) {
-      onDraftsUpdated(dirtyCount);
-    }
+    onDraftsUpdated?.(dirtyCount);
   }, [session, onDraftsUpdated]);
 
   const bumpDraftRevision = useCallback(() => {
@@ -84,18 +76,14 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
     setProgress({ current: 0, total: 13, currentClass: 'h.class', percent: 0 });
 
     try {
-      const data = await analyzeItemTables(session, (p) => {
-        setProgress(p);
-      });
+      const data = await analyzeItemTables(session, (p) => setProgress(p));
       setAnalysisData(data);
-      // Select first item if not already selected
       if (data.items.length > 0 && !selectedItemKey) {
         const first = data.items[0];
         setSelectedItemKey(getItemDraftKey(first.sourceClass, first.sourceField, first.sourceRow));
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
@@ -113,31 +101,24 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
     }
   }, [session]);
 
-  // Update parent when session is ready
   useEffect(() => {
     notifyDraftsChange();
   }, [notifyDraftsChange]);
 
-  // Dirty count
   const dirtyCount = useMemo(() => {
-    // depend on draftRevision to update
     void draftRevision;
     return getDirtyCount(session.itemDrafts);
   }, [session.itemDrafts, draftRevision]);
 
-  // Filtered items (respects drafts for search matching!)
   const filteredItems = useMemo(() => {
     if (!analysisData) return [];
-    void draftRevision; // Trigger re-calculation if drafts change
-
+    void draftRevision;
     let list = analysisData.items;
 
-    // Filter by source
     if (selectedSourceFilter !== 'all') {
       list = list.filter((item) => item.sourceClass === selectedSourceFilter);
     }
 
-    // Filter by search query (checks effective ID, NAME, and description)
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       list = list.filter((item) => {
@@ -150,40 +131,34 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
         );
       });
     }
-
     return list;
   }, [analysisData, selectedSourceFilter, searchQuery, draftRevision, session.itemDrafts]);
 
-  // Reset page when filter or search changes
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, selectedSourceFilter]);
 
-  // Total pages
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
     return filteredItems.slice(start, start + PAGE_SIZE);
   }, [filteredItems, currentPage]);
 
-  // Selected item object (Original ItemRecord from session - NEVER MUTATED)
   const selectedItem = useMemo(() => {
     if (!analysisData || !selectedItemKey) return null;
     return (
-      analysisData.items.find((it) => {
-        return getItemDraftKey(it.sourceClass, it.sourceField, it.sourceRow) === selectedItemKey;
-      }) || null
+      analysisData.items.find(
+        (it) => getItemDraftKey(it.sourceClass, it.sourceField, it.sourceRow) === selectedItemKey
+      ) || null
     );
   }, [analysisData, selectedItemKey]);
 
-  // Active draft for selected item
   const selectedItemDraft = useMemo(() => {
     if (!selectedItem || !session.itemDrafts) return null;
     void draftRevision;
     return getOrCreateDraft(session.itemDrafts, selectedItem);
   }, [selectedItem, session.itemDrafts, draftRevision]);
 
-  // Handlers for draft operations
   const handleUpdateField = (item: ItemRecord, colIndex: number, newValue: string) => {
     if (!session.itemDrafts) return;
     setDraftField(session.itemDrafts, item, colIndex, newValue);
@@ -219,7 +194,6 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
     bumpDraftRevision();
   };
 
-  // Loading State
   if (isLoading) {
     return (
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 sm:p-12 text-center space-y-5">
@@ -228,15 +202,14 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
         </div>
         <div>
           <h3 className="text-base font-bold text-zinc-100 flex items-center justify-center gap-2">
-            <span>Reconstructing Item Tables from Bytecode</span>
+            <span>Đang phục dựng bảng vật phẩm từ bytecode</span>
           </h3>
           <p className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
             {progress
-              ? `Reading <clinit> bytecode & reconstructing table ${progress.current} / ${progress.total}: ${progress.currentClass}`
-              : 'Initializing static initializer analysis...'}
+              ? `Đang đọc bytecode <clinit> và phục dựng bảng ${progress.current} / ${progress.total}: ${progress.currentClass}`
+              : 'Đang khởi tạo phân tích static initializer...'}
           </p>
         </div>
-
         {progress && (
           <div className="max-w-md mx-auto space-y-2">
             <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden border border-zinc-700">
@@ -255,61 +228,51 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
     );
   }
 
-  // Error State
   if (error) {
     return (
       <div className="bg-red-950/30 border border-red-800/80 rounded-xl p-6 space-y-4">
         <div className="flex items-start gap-3 text-red-300">
           <AlertTriangle className="w-5 h-5 shrink-0 text-red-400 mt-0.5" />
           <div>
-            <h3 className="text-sm font-bold text-red-200">
-              Lỗi khi phục dựng Item Tables
-            </h3>
-            <p className="text-xs text-red-300/80 mt-1 font-mono whitespace-pre-wrap">
-              {error}
-            </p>
+            <h3 className="text-sm font-bold text-red-200">Lỗi khi phục dựng bảng vật phẩm</h3>
+            <p className="text-xs text-red-300/80 mt-1 font-mono whitespace-pre-wrap">{error}</p>
           </div>
         </div>
-        <div className="pt-2">
-          <button
-            type="button"
-            onClick={runAnalysis}
-            className="px-3.5 py-1.5 rounded bg-red-900/60 hover:bg-red-900 text-red-100 text-xs font-mono flex items-center gap-2 border border-red-700 cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Thử lại phân tích</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={runAnalysis}
+          className="px-3.5 py-1.5 rounded bg-red-900/60 hover:bg-red-900 text-red-100 text-xs font-mono flex items-center gap-2 border border-red-700 cursor-pointer"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          <span>Thử phân tích lại</span>
+        </button>
       </div>
     );
   }
 
-  if (!analysisData) {
-    return null;
-  }
+  if (!analysisData) return null;
 
   const { diagnostics, sourceFilters } = analysisData;
   const dirtyDraftsList = getDirtyDrafts(session.itemDrafts);
 
   return (
     <div className="space-y-4">
-      {/* Top Diagnostics & Controls Summary Bar */}
       <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3 sm:p-4 space-y-3 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Search Input */}
           <div className="relative flex-1 max-w-md">
             <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by ID, NAME (supports Unicode), or description..."
+              placeholder="Tìm theo ID, tên, mô tả hoặc class nguồn..."
               className="w-full bg-zinc-950 border border-zinc-700/80 focus:border-amber-500 rounded-lg pl-9 pr-8 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-mono"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
+                title="Xóa từ khóa tìm kiếm"
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs px-1 cursor-pointer"
               >
                 &times;
@@ -317,13 +280,10 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
             )}
           </div>
 
-          {/* Quick Metrics & Actions */}
           <div className="flex items-center gap-2 text-xs font-mono flex-wrap">
             <span className="px-2.5 py-1 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
-              Total: <strong className="text-amber-400">{filteredItems.length.toLocaleString()}</strong> / {analysisData.items.length.toLocaleString()}
+              Hiển thị: <strong className="text-amber-400">{filteredItems.length.toLocaleString('vi-VN')}</strong> / {analysisData.items.length.toLocaleString('vi-VN')}
             </span>
-
-            {/* Changes (N) Button */}
             <button
               type="button"
               onClick={() => setShowChangesModal(true)}
@@ -334,13 +294,8 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Changes ({dirtyCount})</span>
-              {dirtyCount > 0 && (
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              )}
+              <span>Thay đổi ({dirtyCount})</span>
             </button>
-
-            {/* Diagnostics Toggle */}
             <button
               type="button"
               onClick={() => setShowDiagnostics(!showDiagnostics)}
@@ -351,15 +306,14 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
               }`}
             >
               <Info className="w-3.5 h-3.5" />
-              <span>Diagnostics</span>
+              <span>Chẩn đoán</span>
             </button>
           </div>
         </div>
 
-        {/* Source Table Filter Pills */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-mono scrollbar-thin">
           <span className="text-[11px] text-zinc-500 shrink-0 mr-1 flex items-center gap-1">
-            <Table className="w-3 h-3 text-zinc-400" /> Source:
+            <Table className="w-3 h-3 text-zinc-400" /> Nguồn:
           </span>
           <button
             type="button"
@@ -370,7 +324,7 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
                 : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-750'
             }`}
           >
-            All ({analysisData.items.length})
+            Tất cả ({analysisData.items.length})
           </button>
           {sourceFilters.map((f) => (
             <button
@@ -385,48 +339,46 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
             >
               <span className="text-zinc-500">#{f.index}</span>
               <span>{f.shortName}.u</span>
-              <span className="text-[10px] text-zinc-500 bg-zinc-900 px-1 rounded">
-                {f.count}
-              </span>
+              <span className="text-[10px] text-zinc-500 bg-zinc-900 px-1 rounded">{f.count}</span>
             </button>
           ))}
         </div>
 
-        {/* Expandable Diagnostics Details */}
         {showDiagnostics && (
           <div className="mt-3 pt-3 border-t border-zinc-800 bg-zinc-950/60 rounded-lg p-3 space-y-2.5 text-xs font-mono">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-zinc-400">
               <div className="bg-zinc-900 p-2 rounded border border-zinc-800">
-                <span className="text-zinc-500 block text-[10px]">SCHEMA COLUMNS</span>
-                <span className="text-zinc-200 font-bold">{diagnostics.schemaColumnCount} columns</span>
+                <span className="text-zinc-500 block text-[10px]">SỐ CỘT SCHEMA</span>
+                <span className="text-zinc-200 font-bold">{diagnostics.schemaColumnCount} cột</span>
               </div>
               <div className="bg-zinc-900 p-2 rounded border border-zinc-800">
-                <span className="text-zinc-500 block text-[10px]">SOURCE TABLES</span>
-                <span className="text-zinc-200 font-bold">{diagnostics.tablesParsed} / {diagnostics.totalSourceTables} parsed</span>
+                <span className="text-zinc-500 block text-[10px]">BẢNG NGUỒN</span>
+                <span className="text-zinc-200 font-bold">{diagnostics.tablesParsed} / {diagnostics.totalSourceTables} đã đọc</span>
               </div>
               <div className="bg-zinc-900 p-2 rounded border border-zinc-800">
-                <span className="text-zinc-500 block text-[10px]">IN-MEMORY DRAFTS</span>
-                <span className="text-amber-400 font-bold">{dirtyCount} modified</span>
+                <span className="text-zinc-500 block text-[10px]">BẢN NHÁP TRONG RAM</span>
+                <span className="text-amber-400 font-bold">{dirtyCount} đã sửa</span>
               </div>
               <div className="bg-zinc-900 p-2 rounded border border-zinc-800">
-                <span className="text-zinc-500 block text-[10px]">RECONSTRUCTED ROWS</span>
-                <span className="text-emerald-400 font-bold">{diagnostics.rowsReconstructed.toLocaleString()}</span>
+                <span className="text-zinc-500 block text-[10px]">DÒNG ĐÃ PHỤC DỰNG</span>
+                <span className="text-emerald-400 font-bold">{diagnostics.rowsReconstructed.toLocaleString('vi-VN')}</span>
               </div>
             </div>
 
-            {/* Schema Column Tags */}
             <div>
               <span className="text-[11px] text-zinc-500 block mb-1">
-                Schema Fields (from a/a/a/h.class field aF):
+                Các trường schema (nguồn kỹ thuật: a/a/a/h.class field aF):
               </span>
               <div className="flex flex-wrap gap-1">
                 {diagnostics.schemaColumns.map((col, idx) => (
                   <span
                     key={col}
                     className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300"
+                    title={ITEM_SCHEMA_FIELDS[idx]?.description}
                   >
                     <strong className="text-amber-500 mr-1">{idx}:</strong>
-                    {col}
+                    {ITEM_SCHEMA_FIELDS[idx]?.label || col}
+                    <span className="text-zinc-600 ml-1">({col})</span>
                   </span>
                 ))}
               </div>
@@ -435,21 +387,14 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
         )}
       </div>
 
-      {/* Main Split Layout: Item Master List (Left) + Item Editor (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Master Item List Table */}
         <div className="lg:col-span-6 xl:col-span-5 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col">
-          {/* Table Header */}
           <div className="px-4 py-2.5 bg-zinc-850/80 border-b border-zinc-800 flex items-center justify-between text-xs font-mono text-zinc-400">
             <div className="flex items-center gap-2">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span className="font-semibold text-zinc-200">Reconstructed Items</span>
-              <span className="text-zinc-500">
-                ({paginatedItems.length} / {filteredItems.length})
-              </span>
+              <span className="font-semibold text-zinc-200">Vật phẩm đã phục dựng</span>
+              <span className="text-zinc-500">({paginatedItems.length} / {filteredItems.length})</span>
             </div>
-
-            {/* Pagination Controls */}
             {totalPages > 1 && (
               <div className="flex items-center gap-1.5">
                 <button
@@ -457,19 +402,17 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
                   disabled={currentPage <= 1}
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:pointer-events-none cursor-pointer text-zinc-300"
-                  title="Previous Page"
+                  title="Trang trước"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </button>
-                <span className="text-[11px] text-zinc-400">
-                  {currentPage} / {totalPages}
-                </span>
+                <span className="text-[11px] text-zinc-400">{currentPage} / {totalPages}</span>
                 <button
                   type="button"
                   disabled={currentPage >= totalPages}
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                   className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:pointer-events-none cursor-pointer text-zinc-300"
-                  title="Next Page"
+                  title="Trang sau"
                 >
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
@@ -477,16 +420,11 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
             )}
           </div>
 
-          {/* Table Body */}
           {paginatedItems.length === 0 ? (
             <div className="p-8 text-center text-xs font-mono text-zinc-500 space-y-1">
-              <p>Không tìm thấy item nào phù hợp với bộ lọc.</p>
+              <p>Không tìm thấy vật phẩm nào phù hợp với bộ lọc.</p>
               {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="text-amber-400 hover:underline cursor-pointer"
-                >
+                <button type="button" onClick={() => setSearchQuery('')} className="text-amber-400 hover:underline cursor-pointer">
                   Xóa từ khóa tìm kiếm
                 </button>
               )}
@@ -497,9 +435,9 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
                 <thead className="bg-zinc-950/80 text-zinc-400 sticky top-0 z-10 border-b border-zinc-800 text-[11px]">
                   <tr>
                     <th className="px-3 py-2 w-16">ID</th>
-                    <th className="px-3 py-2">NAME</th>
-                    <th className="px-3 py-2 w-24">SOURCE</th>
-                    <th className="px-3 py-2 w-14 text-center">STATUS</th>
+                    <th className="px-3 py-2">TÊN</th>
+                    <th className="px-3 py-2 w-24">NGUỒN</th>
+                    <th className="px-3 py-2 w-14 text-center">TRẠNG THÁI</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
@@ -508,7 +446,6 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
                     const isSelected = selectedItemKey === itemKey;
                     const shortClass = item.sourceClass.split('/').pop() || item.sourceClass;
                     const effective = getEffectiveItem(item, session.itemDrafts);
-
                     return (
                       <tr
                         key={itemKey}
@@ -519,27 +456,19 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
                             : 'hover:bg-zinc-800/60 text-zinc-300'
                         }`}
                       >
-                        <td className="px-3 py-2 font-bold text-amber-400 whitespace-nowrap">
-                          {effective.id || '-'}
-                        </td>
+                        <td className="px-3 py-2 font-bold text-amber-400 whitespace-nowrap">{effective.id || '-'}</td>
                         <td className="px-3 py-2 font-sans font-medium text-zinc-100 max-w-[180px] truncate">
-                          <span>{effective.name || <span className="text-zinc-600 font-mono italic">(no name)</span>}</span>
+                          {effective.name || <span className="text-zinc-600 font-mono italic">(chưa có tên)</span>}
                         </td>
                         <td className="px-3 py-2 text-zinc-400 text-[11px] whitespace-nowrap">
-                          <span className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 mr-1">
-                            {shortClass}
-                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 mr-1">{shortClass}</span>
                           <span className="text-zinc-500">:{item.sourceRow}</span>
                         </td>
                         <td className="px-3 py-2 text-center whitespace-nowrap">
                           {effective.isDirty ? (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
-                              MOD
-                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">ĐÃ SỬA</span>
                           ) : (
-                            <span className="text-[10px] text-zinc-600">
-                              -
-                            </span>
+                            <span className="text-[10px] text-zinc-600">-</span>
                           )}
                         </td>
                       </tr>
@@ -551,7 +480,6 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
           )}
         </div>
 
-        {/* Right Pane: Item Editor Form */}
         <div className="lg:col-span-6 xl:col-span-7 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col max-h-[710px]">
           {selectedItem && selectedItemDraft ? (
             <div className="overflow-y-auto p-4 scrollbar-thin">
@@ -568,13 +496,12 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
             </div>
           ) : (
             <div className="h-full min-h-[350px] flex items-center justify-center p-6 text-center text-xs font-mono text-zinc-500">
-              Chọn một item từ danh sách bên trái để xem và chỉnh sửa dữ liệu in-memory draft.
+              Chọn một vật phẩm từ danh sách bên trái để xem và chỉnh sửa bản nháp trong bộ nhớ.
             </div>
           )}
         </div>
       </div>
 
-      {/* Changes Modal Panel */}
       <ChangesPanel
         session={session}
         isOpen={showChangesModal}
