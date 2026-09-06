@@ -4,12 +4,64 @@ export type EmulatorSourceType = 'ORIGINAL' | 'PATCHED';
 
 export type EmulatorRuntimeStatus =
   | 'IDLE'
-  | 'LOADING'
+  | 'LOADING_RUNTIME'
+  | 'RUNTIME_READY'
+  | 'MOUNTING_JAR'
+  | 'JAR_MOUNTED'
+  | 'STARTING_MIDLET'
   | 'RUNNING'
-  | 'PAUSED'
-  | 'STOPPED'
   | 'ERROR'
+  | 'STOPPED'
   | 'UNSUPPORTED';
+
+export type EmulatorRuntimeStage =
+  | 'IDLE'
+  | 'LOADING_RUNTIME'
+  | 'RUNTIME_READY'
+  | 'MOUNTING_JAR'
+  | 'JAR_MOUNTED'
+  | 'STARTING_MIDLET'
+  | 'RUNNING'
+  | 'ERROR';
+
+export interface EmulatorAssetDiagnostic {
+  name: string;
+  url: string;
+  httpStatus: number | null;
+  contentLength: number | null;
+  status: 'PENDING' | 'LOADED' | 'FAILED';
+  error?: string;
+  isRangeTested?: boolean;
+  rangeStatus?: number | null;
+}
+
+export interface EmulatorDiagnosticsInfo {
+  backend: string;
+  version: string;
+  cheerpjLoaded: boolean;
+  freej2meLoaded: boolean;
+  runtimeScriptLoaded: boolean;
+  runtimeInitialized: boolean;
+  gameJarMounted: boolean;
+  midletStarted: boolean;
+  canvasConnected: boolean;
+  rangeRequestSupported: boolean | null;
+  rangeHttpStatus?: number;
+  corsCspStatus?: string;
+  iframeOrigin?: string;
+  parentOrigin?: string;
+  blobAccessible?: boolean | null;
+  jarByteLength?: number;
+  blobCreated?: boolean;
+  blobUrlStatus?: string;
+  jarHandedToEmulator?: boolean;
+  emulatorAcknowledgedJar?: boolean;
+  currentStage: EmulatorRuntimeStage;
+  stageError?: string;
+  selfTestStatus?: 'IDLE' | 'RUNNING' | 'PASS' | 'FAIL';
+  selfTestRootCause?: string;
+  assets: EmulatorAssetDiagnostic[];
+}
 
 export type EmulatorScreenSize = '240x320' | '176x220' | '128x160' | '320x240' | '360x640';
 
@@ -79,6 +131,9 @@ export interface J2meTestSession {
   setScreenSize(size: EmulatorScreenSize): void;
   getStatus(): EmulatorRuntimeStatus;
   getLogs(): EmulatorLogEntry[];
+  getDiagnostics(): EmulatorDiagnosticsInfo;
   onLog(listener: (entry: EmulatorLogEntry) => void): () => void;
   onStatusChange(listener: (status: EmulatorRuntimeStatus) => void): () => void;
+  onDiagnosticsChange(listener: (diag: EmulatorDiagnosticsInfo) => void): () => void;
+  runSelfTest(): Promise<boolean>;
 }

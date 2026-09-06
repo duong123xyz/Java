@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>J2ME Isolated Runner</title>
+  <title>NRO Studio J2ME Emulator Runner</title>
   <style>
     * {
       box-sizing: border-box;
@@ -17,403 +17,530 @@
       overflow: hidden;
       background: #09090b;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      font-family: monospace;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: #e4e4e7;
     }
-    #screen-container {
+    #screen-area {
       position: relative;
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
       background: #000;
-      box-shadow: 0 0 20px rgba(0,0,0,0.8);
       border: 1px solid #27272a;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.7);
+      width: 240px;
+      height: 320px;
+      overflow: hidden;
     }
-    #j2me-canvas {
+    #display {
+      display: none;
       image-rendering: pixelated;
       image-rendering: -moz-crisp-edges;
       image-rendering: crisp-edges;
-      background: #0f172a;
-      display: block;
+      outline: none;
+      cursor: crosshair;
     }
-    #overlay {
+    #status-overlay {
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      inset: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(9, 9, 11, 0.92);
-      color: #38bdf8;
-      font-size: 11px;
-      text-align: center;
       padding: 16px;
-      gap: 8px;
+      background: rgba(9, 9, 11, 0.95);
       z-index: 10;
+      text-align: center;
+      gap: 10px;
     }
-    #overlay.hidden {
-      display: none;
+    .stage-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      background: #1e293b;
+      color: #38bdf8;
+      border: 1px solid #0284c7;
+    }
+    .stage-badge.error {
+      background: #450a0a;
+      color: #f87171;
+      border-color: #dc2626;
+    }
+    .stage-badge.running {
+      background: #064e3b;
+      color: #34d399;
+      border-color: #059669;
+    }
+    .status-msg {
+      font-size: 11px;
+      line-height: 1.4;
+      color: #a1a1aa;
+      max-width: 220px;
+      word-break: break-word;
+    }
+    .error-details {
+      font-size: 10px;
+      color: #fca5a5;
+      background: #18181b;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #7f1d1d;
+      max-height: 110px;
+      overflow-y: auto;
+      text-align: left;
+      width: 100%;
+      white-space: pre-wrap;
     }
     .spinner {
-      width: 24px;
-      height: 24px;
-      border: 2px solid #38bdf8;
-      border-top-color: transparent;
+      width: 20px;
+      height: 20px;
+      border: 2px solid #27272a;
+      border-top-color: #38bdf8;
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
-    #status-bar {
-      position: absolute;
-      bottom: 4px;
-      left: 6px;
-      right: 6px;
-      display: flex;
-      justify-content: space-between;
-      color: #94a3b8;
-      font-size: 9px;
-      pointer-events: none;
-      z-index: 5;
-    }
   </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
-  <div id="screen-container">
-    <canvas id="j2me-canvas" width="240" height="320"></canvas>
-    <div id="status-bar">
-      <span id="fps-counter">0 FPS</span>
-      <span id="midlet-label">IDLE</span>
-    </div>
-    <div id="overlay">
-      <div id="overlay-spinner" class="spinner"></div>
-      <div id="overlay-title" style="font-weight: bold; font-size: 12px; color: #f8fafc;">Chờ nạp Game JAR...</div>
-      <div id="overlay-desc" style="color: #94a3b8;">Chọn Original hoặc Patched JAR từ menu điều khiển</div>
+  <div id="screen-area">
+    <canvas id="display" tabindex="0" width="240" height="320"></canvas>
+    <div id="status-overlay">
+      <div id="spinner" class="spinner"></div>
+      <div id="stage-badge" class="stage-badge">IDLE</div>
+      <div id="status-msg" class="status-msg">Emulator runner ready. Awaiting command.</div>
+      <div id="error-details" class="error-details" style="display: none;"></div>
     </div>
   </div>
 
-  <script>
-    (function() {
-      const canvas = document.getElementById('j2me-canvas');
-      const ctx = canvas.getContext('2d');
-      const overlay = document.getElementById('overlay');
-      const overlayTitle = document.getElementById('overlay-title');
-      const overlayDesc = document.getElementById('overlay-desc');
-      const overlaySpinner = document.getElementById('overlay-spinner');
-      const fpsCounter = document.getElementById('fps-counter');
-      const midletLabel = document.getElementById('midlet-label');
-
-      let currentJarZip = null;
-      let isRunning = false;
-      let animationFrameId = null;
-      let lastFrameTime = performance.now();
-      let frameCount = 0;
-      let fps = 0;
-      let soundEnabled = true;
-
-      let midletInfo = {
-        name: 'GameMidlet',
-        mainClass: 'main.GameMidlet',
-        iconUrl: null
-      };
-
-      let gameResources = {
-        iconImg: null,
-        sprites: []
-      };
-
-      function logToParent(level, message) {
+  <script type="module">
+    // --- Error & Exception Capture ---
+    function sendLog(level, message) {
+      try {
         window.parent.postMessage({
-          source: 'j2me-runner',
           type: 'LOG',
-          level: level,
-          message: message
-        }, '*');
-      }
-
-      function updateStatus(status) {
-        window.parent.postMessage({
-          source: 'j2me-runner',
-          type: 'STATUS_CHANGE',
-          status: status
-        }, '*');
-      }
-
-      function showOverlay(title, desc, showSpin) {
-        overlay.classList.remove('hidden');
-        overlayTitle.textContent = title;
-        overlayDesc.textContent = desc || '';
-        overlaySpinner.style.display = showSpin ? 'block' : 'none';
-      }
-
-      function hideOverlay() {
-        overlay.classList.add('hidden');
-      }
-
-      function setScreenSize(sizeStr) {
-        const parts = sizeStr.split('x');
-        if (parts.length === 2) {
-          const w = parseInt(parts[0], 10) || 240;
-          const h = parseInt(parts[1], 10) || 320;
-          canvas.width = w;
-          canvas.height = h;
-          logToParent('info', 'Canvas dimensions updated: ' + w + 'x' + h);
-        }
-      }
-
-      // Game Screen Rendering
-      let tick = 0;
-      let keyState = {};
-
-      function renderFrame() {
-        if (!isRunning) return;
-
-        tick++;
-        const now = performance.now();
-        frameCount++;
-        if (now - lastFrameTime >= 1000) {
-          fps = frameCount;
-          frameCount = 0;
-          lastFrameTime = now;
-          fpsCounter.textContent = fps + ' FPS';
-        }
-
-        // Draw J2ME LCD Screen
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Header status bar in-game
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(0, 0, canvas.width, 22);
-
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = '10px monospace';
-        ctx.fillText(midletInfo.name.substring(0, 16), 6, 15);
-
-        ctx.fillStyle = '#10b981';
-        ctx.fillText('NRO MIDP 2.0', canvas.width - 76, 15);
-
-        // Main game area
-        // Checkered nostalgic background
-        ctx.fillStyle = '#090e1a';
-        for (let y = 24; y < canvas.height - 24; y += 16) {
-          for (let x = 0; x < canvas.width; x += 16) {
-            if (((x + y) / 16) % 2 === 0) {
-              ctx.fillRect(x, y, 16, 16);
-            }
+          entry: {
+            id: 'log-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+            timestamp: new Date().toLocaleTimeString(),
+            level,
+            message: String(message)
           }
-        }
+        }, '*');
+      } catch (e) {}
+    }
 
-        // Display game icon if loaded
-        if (gameResources.iconImg) {
-          const iconSize = 48;
-          ctx.drawImage(
-            gameResources.iconImg,
-            canvas.width / 2 - iconSize / 2,
-            50,
-            iconSize,
-            iconSize
-          );
-        } else {
-          // Placeholder phone icon
-          ctx.fillStyle = '#22c55e';
-          ctx.fillRect(canvas.width / 2 - 20, 50, 40, 40);
-        }
+    const origLog = console.log;
+    const origWarn = console.warn;
+    const origError = console.error;
 
-        // Title text
-        ctx.fillStyle = '#f8fafc';
-        ctx.font = 'bold 12px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(midletInfo.name, canvas.width / 2, 115);
+    console.log = function(...args) {
+      origLog.apply(console, args);
+      sendLog('info', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+    };
+    console.warn = function(...args) {
+      origWarn.apply(console, args);
+      sendLog('warn', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+    };
+    console.error = function(...args) {
+      origError.apply(console, args);
+      sendLog('error', args.map(a => typeof a === 'object' ? (a.stack || JSON.stringify(a)) : String(a)).join(' '));
+    };
 
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '10px monospace';
-        ctx.fillText('Class: ' + midletInfo.mainClass, canvas.width / 2, 132);
+    window.onerror = function(message, source, lineno, colno, error) {
+      const errStr = error && error.stack ? error.stack : `${message} at ${source}:${lineno}:${colno}`;
+      sendLog('error', `[window.onerror] ${errStr}`);
+      handleFatalError('Uncaught window error', errStr);
+      return false;
+    };
 
-        // Simulated Game Canvas Active Indicator
-        const pulse = Math.sin(tick * 0.08) * 0.5 + 0.5;
-        ctx.fillStyle = 'rgba(56, 189, 248, ' + (0.2 + pulse * 0.3) + ')';
-        ctx.fillRect(16, 150, canvas.width - 32, 60);
+    window.addEventListener('unhandledrejection', function(e) {
+      const reason = e.reason && e.reason.stack ? e.reason.stack : String(e.reason);
+      sendLog('error', `[unhandledrejection] ${reason}`);
+      handleFatalError('Unhandled promise rejection', reason);
+    });
 
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 11px monospace';
-        ctx.fillText('▶ J2ME RUNNER ACTIVE', canvas.width / 2, 172);
+    // --- State Machine & UI Controls ---
+    let currentStage = 'IDLE';
+    let stageTimeoutTimer = null;
+    const STAGE_TIMEOUT_MS = 15000; // 15 seconds strict timeout per stage
 
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '9px monospace';
-        ctx.fillText('Press 1-9, Fire/Enter, Soft-keys', canvas.width / 2, 192);
+    const badgeEl = document.getElementById('stage-badge');
+    const msgEl = document.getElementById('status-msg');
+    const spinnerEl = document.getElementById('spinner');
+    const errorDetailsEl = document.getElementById('error-details');
+    const overlayEl = document.getElementById('status-overlay');
+    const displayCanvas = document.getElementById('display');
+    const screenCtx = displayCanvas.getContext('2d');
 
-        // Key pressed indicators
-        const activeKeyNames = Object.keys(keyState).filter(k => keyState[k]);
-        if (activeKeyNames.length > 0) {
-          ctx.fillStyle = '#f59e0b';
-          ctx.font = '10px monospace';
-          ctx.fillText('Key: ' + activeKeyNames.join(', '), canvas.width / 2, 230);
-        }
+    // Runtime state tracking
+    const runtimeState = {
+      cheerpjLoaded: false,
+      freej2meLoaded: false,
+      runtimeScriptLoaded: false,
+      runtimeInitialized: false,
+      gameJarMounted: false,
+      midletStarted: false,
+      canvasConnected: false,
+      cheerpjLib: null,
+      freej2meClass: null,
+      launcherUtil: null,
+    };
 
-        // Bottom Soft-Key Bar
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(0, canvas.height - 22, canvas.width, 22);
+    function setStage(stage, message, errorDetail = null) {
+      clearTimeout(stageTimeoutTimer);
+      currentStage = stage;
 
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText('Menu', 6, canvas.height - 7);
+      badgeEl.textContent = stage;
+      badgeEl.className = 'stage-badge' + (stage === 'ERROR' ? ' error' : stage === 'RUNNING' ? ' running' : '');
+      msgEl.textContent = message;
 
-        ctx.textAlign = 'right';
-        ctx.fillText('Exit', canvas.width - 6, canvas.height - 7);
-
-        ctx.textAlign = 'left'; // Reset
-
-        animationFrameId = requestAnimationFrame(renderFrame);
+      if (errorDetail) {
+        errorDetailsEl.style.display = 'block';
+        errorDetailsEl.textContent = errorDetail;
+      } else {
+        errorDetailsEl.style.display = 'none';
       }
 
-      async function handleLoadJar(data) {
-        showOverlay('Đang nạp file JAR...', 'Trích xuất class & resource...', true);
-        updateStatus('LOADING');
-        logToParent('info', 'Runner starting unpack: ' + data.fileName);
-
-        if (data.screenSize) {
-          setScreenSize(data.screenSize);
-        }
-        if (data.sound !== undefined) {
-          soundEnabled = data.sound;
-        }
-
-        midletInfo.name = data.midletName || 'DragonBoy';
-        midletInfo.mainClass = data.midletClass || 'main.GameMidlet';
-        midletLabel.textContent = midletInfo.name;
-
-        try {
-          // Fetch raw Blob
-          const response = await fetch(data.jarUrl);
-          const arrayBuffer = await response.arrayBuffer();
-
-          if (window.JSZip) {
-            currentJarZip = await JSZip.loadAsync(arrayBuffer);
-            logToParent('info', 'JSZip parsed candidate JAR successfully.');
-
-            // Extract Icon if exists
-            const iconEntry = currentJarZip.file('icon.png') || currentJarZip.file('a.png');
-            if (iconEntry) {
-              const iconBlob = await iconEntry.async('blob');
-              const iconImg = new Image();
-              iconImg.onload = function() {
-                gameResources.iconImg = iconImg;
-                logToParent('info', 'MIDlet icon loaded into memory.');
-              };
-              iconImg.src = URL.createObjectURL(iconBlob);
-            }
-          }
-
-          logToParent('info', 'MIDlet class ready: ' + midletInfo.mainClass);
-          showOverlay('JAR Sẵn sàng', 'Nhấn [ Start ] để bắt đầu chạy game.', false);
-          updateStatus('STOPPED');
-        } catch (err) {
-          logToParent('error', 'Lỗi unpack JAR: ' + err.message);
-          showOverlay('Lỗi nạp JAR', err.message, false);
-          updateStatus('ERROR');
-        }
+      if (stage === 'RUNNING') {
+        spinnerEl.style.display = 'none';
+        overlayEl.style.display = 'none';
+        displayCanvas.style.display = 'block';
+        displayCanvas.focus();
+      } else {
+        overlayEl.style.display = 'flex';
+        spinnerEl.style.display = (stage === 'ERROR' || stage === 'IDLE') ? 'none' : 'block';
       }
 
-      function handleStart() {
-        hideOverlay();
-        isRunning = true;
-        updateStatus('RUNNING');
-        lastFrameTime = performance.now();
-        frameCount = 0;
-        animationFrameId = requestAnimationFrame(renderFrame);
-        logToParent('info', 'Game loop running at 60 FPS.');
-      }
-
-      function handleStop() {
-        isRunning = false;
-        if (animationFrameId) {
-          cancelAnimationFrame(animationFrameId);
-          animationFrameId = null;
-        }
-        showOverlay('Đã dừng', 'Nhấn Start hoặc Restart để tiếp tục.', false);
-        updateStatus('STOPPED');
-        logToParent('info', 'Emulator stopped.');
-      }
-
-      function handleRestart() {
-        handleStop();
-        handleStart();
-      }
-
-      function handleKeyEvent(keyCode, action) {
-        const isDown = action === 'down';
-        keyState[keyCode] = isDown;
-
-        // Beep sound effect if sound is enabled and key down
-        if (soundEnabled && isDown && window.AudioContext) {
-          try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.frequency.value = 600 + (Math.abs(keyCode) * 15) % 800;
-            gain.gain.value = 0.03;
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-            setTimeout(() => {
-              osc.stop();
-              audioCtx.close();
-            }, 40);
-          } catch (e) {}
-        }
-      }
-
-      // Listen for parent messages
-      window.addEventListener('message', function(event) {
-        const data = event.data;
-        if (!data || typeof data !== 'object' || data.target !== 'j2me-runner') {
-          return;
-        }
-
-        switch (data.type) {
-          case 'LOAD_JAR':
-            handleLoadJar(data);
-            break;
-          case 'START':
-            handleStart();
-            break;
-          case 'STOP':
-            handleStop();
-            break;
-          case 'RESTART':
-            handleRestart();
-            break;
-          case 'KEY_EVENT':
-            handleKeyEvent(data.keyCode, data.keyAction);
-            break;
-          case 'SET_SOUND':
-            soundEnabled = !!data.sound;
-            logToParent('info', 'Sound: ' + (soundEnabled ? 'ON' : 'OFF'));
-            break;
-          case 'SET_SCREEN_SIZE':
-            setScreenSize(data.screenSize);
-            break;
-        }
-      });
-
-      // Notify parent that runner iframe is ready
+      // Send status to parent
       window.parent.postMessage({
-        source: 'j2me-runner',
         type: 'STATUS_CHANGE',
-        status: 'IDLE'
+        status: stage,
+        stage: stage,
+        message,
+        error: errorDetail,
+        runtimeInfo: {
+          cheerpjLoaded: runtimeState.cheerpjLoaded,
+          freej2meLoaded: runtimeState.freej2meLoaded,
+          runtimeScriptLoaded: runtimeState.runtimeScriptLoaded,
+          runtimeInitialized: runtimeState.runtimeInitialized,
+          gameJarMounted: runtimeState.gameJarMounted,
+          midletStarted: runtimeState.midletStarted,
+          canvasConnected: runtimeState.canvasConnected,
+        }
       }, '*');
 
-      logToParent('info', 'J2ME Isolated Runner container initialized.');
-    })();
+      // 15-second Stage Watchdog
+      if (stage !== 'IDLE' && stage !== 'RUNNING' && stage !== 'ERROR' && stage !== 'STOPPED') {
+        stageTimeoutTimer = setTimeout(() => {
+          handleTimeout(stage);
+        }, STAGE_TIMEOUT_MS);
+      }
+    }
+
+    function handleTimeout(stage) {
+      const err = `Runtime initialization timed out after 15s at stage: ${stage}`;
+      console.error(err);
+      setStage('ERROR', `Timed out at stage [${stage}]`, err);
+    }
+
+    function handleFatalError(title, details) {
+      clearTimeout(stageTimeoutTimer);
+      setStage('ERROR', title, details);
+    }
+
+    // --- Dynamic CheerpJ Script Loader ---
+    async function loadCheerpJScript() {
+      if (window.cheerpjInit) {
+        runtimeState.runtimeScriptLoaded = true;
+        runtimeState.cheerpjLoaded = true;
+        return true;
+      }
+
+      console.log('[1] Loading CheerpJ runtime script from CDN...');
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js';
+        script.crossOrigin = 'anonymous';
+
+        script.onload = () => {
+          console.log('[2] CheerpJ script loaded successfully');
+          runtimeState.runtimeScriptLoaded = true;
+          runtimeState.cheerpjLoaded = typeof window.cheerpjInit === 'function';
+          resolve(true);
+        };
+
+        script.onerror = (e) => {
+          const err = 'Failed to load CheerpJ loader.js from CDN (blocked by network, CSP, or CORS)';
+          console.error('[2] ' + err, e);
+          runtimeState.runtimeScriptLoaded = false;
+          runtimeState.cheerpjLoaded = false;
+          reject(new Error(err));
+        };
+
+        document.head.appendChild(script);
+      });
+    }
+
+    // --- Initialize CheerpJ & FreeJ2ME Runtime ---
+    async function initializeCheerpJRuntime() {
+      if (runtimeState.freej2meLoaded && runtimeState.freej2meClass) {
+        return;
+      }
+
+      setStage('LOADING_RUNTIME', 'Loading CheerpJ runtime script...');
+      await loadCheerpJScript();
+
+      setStage('LOADING_RUNTIME', 'Initializing CheerpJ runtime & native bridges...');
+      console.log('[3] Initializing CheerpJ runtime...');
+
+      // Dynamic import of FreeJ2ME native JS modules
+      const [
+        canvasFontModule,
+        canvasGraphicsModule,
+        gles2Module,
+        jsReferenceModule,
+        mediaBridgeModule,
+        midiBridgeModule,
+      ] = await Promise.all([
+        import('/emulator/core/libjs/libcanvasfont.js').catch(e => { console.warn('Font bridge load error', e); return { default: {} }; }),
+        import('/emulator/core/libjs/libcanvasgraphics.js').catch(e => { console.warn('Graphics bridge load error', e); return { default: {} }; }),
+        import('/emulator/core/libjs/libgles2.js').catch(e => { console.warn('Gles2 bridge load error', e); return { default: {} }; }),
+        import('/emulator/core/libjs/libjsreference.js').catch(e => { console.warn('JS ref bridge load error', e); return { default: {} }; }),
+        import('/emulator/core/libjs/libmediabridge.js').catch(e => { console.warn('Media bridge load error', e); return { default: {} }; }),
+        import('/emulator/core/libjs/libmidibridge.js').catch(e => { console.warn('Midi bridge load error', e); return { default: {} }; }),
+      ]);
+
+      const canvasFontNatives = canvasFontModule.default || canvasFontModule;
+      const canvasGraphicsNatives = canvasGraphicsModule.default || canvasGraphicsModule;
+      const gles2Natives = gles2Module.default || gles2Module;
+      const jsReferenceNatives = jsReferenceModule.default || jsReferenceModule;
+      const mediaBridgeNatives = mediaBridgeModule.default || mediaBridgeModule;
+      const midiBridgeNatives = midiBridgeModule.default || midiBridgeModule;
+
+      try {
+        await window.cheerpjInit({
+          enableDebug: false,
+          natives: {
+            ...canvasFontNatives,
+            ...canvasGraphicsNatives,
+            ...gles2Natives,
+            ...jsReferenceNatives,
+            ...mediaBridgeNatives,
+            ...midiBridgeNatives,
+            async Java_pl_zb3_freej2me_bridge_shell_Shell_setTitle(lib, title) {
+              console.log('[Shell] App Title:', title);
+            },
+            async Java_pl_zb3_freej2me_bridge_shell_Shell_getScreenCtx(lib) {
+              runtimeState.canvasConnected = true;
+              return screenCtx;
+            },
+            async Java_pl_zb3_freej2me_bridge_shell_Shell_setCanvasSize(lib, width, height) {
+              console.log(`[Shell] setCanvasSize: ${width}x${height}`);
+              displayCanvas.width = width;
+              displayCanvas.height = height;
+              displayCanvas.style.width = width + 'px';
+              displayCanvas.style.height = height + 'px';
+              runtimeState.canvasConnected = true;
+              // True runtime frame ready!
+              setStage('RUNNING', `Game running (${width}x${height})`);
+            },
+            async Java_pl_zb3_freej2me_bridge_shell_Shell_say(lib, msg) {
+              console.log('[FreeJ2ME]', msg);
+            }
+          }
+        });
+        runtimeState.runtimeInitialized = true;
+        console.log('[4] CheerpJ ready');
+      } catch (err) {
+        console.error('[4] CheerpJ initialization error:', err);
+        throw new Error('CheerpJ initialization failed: ' + (err.message || err));
+      }
+
+      setStage('LOADING_RUNTIME', 'Mounting FreeJ2ME core library (freej2me-web.jar)...');
+      console.log('[5] Loading FreeJ2ME runtime from /emulator/core/freej2me-web.jar...');
+
+      try {
+        const lib = await window.cheerpjRunLibrary('/emulator/core/freej2me-web.jar');
+        runtimeState.cheerpjLib = lib;
+
+        const FreeJ2ME = await lib.org.recompile.freej2me.FreeJ2ME;
+        runtimeState.freej2meClass = FreeJ2ME;
+
+        const launcherUtil = await lib.pl.zb3.freej2me.launcher.LauncherUtil;
+        runtimeState.launcherUtil = launcherUtil;
+
+        runtimeState.freej2meLoaded = true;
+        console.log('[6] FreeJ2ME ready');
+        setStage('RUNTIME_READY', 'FreeJ2ME runtime ready');
+      } catch (err) {
+        console.error('[6] FreeJ2ME runtime loading error:', err);
+        throw new Error('FreeJ2ME JAR runtime loading failed: ' + (err.message || err));
+      }
+    }
+
+    // --- Mount Game JAR into CheerpJ Virtual FS ---
+    async function mountGameJar(arrayBuffer, fileName) {
+      setStage('MOUNTING_JAR', `Mounting ${fileName} into virtual filesystem...`);
+      console.log(`[7] Mounting JAR: ${fileName} (${arrayBuffer.byteLength} bytes)...`);
+
+      if (!runtimeState.cheerpjLib || !runtimeState.launcherUtil) {
+        throw new Error('Cannot mount JAR: FreeJ2ME launcherUtil not available');
+      }
+
+      const File = await runtimeState.cheerpjLib.java.io.File;
+      const tmpPath = '/files/_tmp/game_' + Date.now() + '.jar';
+      const jarFile = await new File(tmpPath);
+
+      // Copy buffer into CheerpJ virtual file
+      const int8Data = new Int8Array(arrayBuffer);
+      await runtimeState.launcherUtil.copyJar(int8Data, jarFile);
+
+      runtimeState.gameJarMounted = true;
+      console.log(`[7] JAR successfully mounted at virtual path: ${tmpPath}`);
+      setStage('JAR_MOUNTED', `JAR mounted at ${tmpPath}`);
+
+      return tmpPath;
+    }
+
+    // --- Start MIDlet ---
+    async function startMidlet(jarVirtualPath, mainClass) {
+      setStage('STARTING_MIDLET', `Starting MIDlet: ${mainClass}...`);
+      console.log(`[8] Starting MIDlet target: ${mainClass} from ${jarVirtualPath}...`);
+
+      if (!runtimeState.freej2meClass) {
+        throw new Error('FreeJ2ME class not available');
+      }
+
+      runtimeState.midletStarted = true;
+
+      // Invoke FreeJ2ME.main(['jar', jarVirtualPath])
+      runtimeState.freej2meClass.main(['jar', jarVirtualPath]).catch(err => {
+        console.error('[FreeJ2ME crash]', err);
+        handleFatalError('MIDlet crashed during execution', err && err.stack ? err.stack : String(err));
+      });
+
+      console.log('[9] Awaiting canvas resize & initial frame from FreeJ2ME runtime...');
+    }
+
+    // --- Self-Test Runner ---
+    async function runSelfTest() {
+      console.log('=== [SELF-TEST] Starting automated emulator diagnostics ===');
+      setStage('LOADING_RUNTIME', 'Self-Test: Testing CheerpJ & FreeJ2ME integration...');
+
+      try {
+        await initializeCheerpJRuntime();
+
+        if (runtimeState.cheerpjLoaded && runtimeState.freej2meLoaded) {
+          console.log('=== [SELF-TEST] PASS: CheerpJ and FreeJ2ME loaded and initialized ===');
+          setStage('RUNTIME_READY', 'EMULATOR SELF-TEST: PASS (Core ready)');
+          window.parent.postMessage({
+            type: 'SELF_TEST_RESULT',
+            status: 'PASS',
+            stage: currentStage,
+            runtimeInfo: {
+              cheerpjLoaded: runtimeState.cheerpjLoaded,
+              freej2meLoaded: runtimeState.freej2meLoaded,
+              runtimeScriptLoaded: runtimeState.runtimeScriptLoaded,
+              runtimeInitialized: runtimeState.runtimeInitialized,
+              gameJarMounted: false,
+              midletStarted: false,
+              canvasConnected: false,
+            }
+          }, '*');
+        } else {
+          throw new Error('Core state verification failed after initialization');
+        }
+      } catch (err) {
+        console.error('=== [SELF-TEST] FAIL ===', err);
+        const rootCause = err && err.message ? err.message : String(err);
+        setStage('ERROR', 'EMULATOR SELF-TEST: FAIL', rootCause);
+        window.parent.postMessage({
+          type: 'SELF_TEST_RESULT',
+          status: 'FAIL',
+          stage: currentStage,
+          rootCause,
+          runtimeInfo: {
+            cheerpjLoaded: runtimeState.cheerpjLoaded,
+            freej2meLoaded: runtimeState.freej2meLoaded,
+            runtimeScriptLoaded: runtimeState.runtimeScriptLoaded,
+            runtimeInitialized: runtimeState.runtimeInitialized,
+          }
+        }, '*');
+      }
+    }
+
+    // --- Parent Message Handler ---
+    window.addEventListener('message', async (event) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+
+      if (data.type === 'PING') {
+        window.parent.postMessage({
+          type: 'PONG',
+          stage: currentStage,
+          runtimeInfo: {
+            cheerpjLoaded: runtimeState.cheerpjLoaded,
+            freej2meLoaded: runtimeState.freej2meLoaded,
+            runtimeScriptLoaded: runtimeState.runtimeScriptLoaded,
+            runtimeInitialized: runtimeState.runtimeInitialized,
+          }
+        }, '*');
+        return;
+      }
+
+      if (data.type === 'RUN_SELF_TEST') {
+        await runSelfTest();
+        return;
+      }
+
+      if (data.type === 'LOAD_JAR') {
+        try {
+          const { jarBuffer, fileName, mainClass } = data;
+          if (!jarBuffer) {
+            throw new Error('No JAR buffer provided in LOAD_JAR event');
+          }
+
+          console.log(`[HANDOFF] Received JAR buffer from parent: ${fileName} (${jarBuffer.byteLength} bytes)`);
+
+          // 1. Ensure runtime ready
+          await initializeCheerpJRuntime();
+
+          // 2. Mount JAR
+          const jarVirtualPath = await mountGameJar(jarBuffer, fileName);
+
+          // 3. Start MIDlet
+          await startMidlet(jarVirtualPath, mainClass || 'main.GameMidlet');
+
+        } catch (err) {
+          console.error('[LOAD_JAR exception]', err);
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const stack = err instanceof Error ? err.stack : '';
+          handleFatalError('Failed to load/start JAR', stack || errorMsg);
+        }
+        return;
+      }
+
+      if (data.type === 'STOP') {
+        clearTimeout(stageTimeoutTimer);
+        setStage('STOPPED', 'Execution stopped by user');
+        return;
+      }
+    });
+
+    // Notify parent that iframe is active
+    window.parent.postMessage({
+      type: 'IFRAME_READY',
+      origin: window.location.origin
+    }, '*');
   </script>
 </body>
 </html>

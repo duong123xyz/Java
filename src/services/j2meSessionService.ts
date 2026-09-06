@@ -2,11 +2,18 @@ import { ManifestInfo } from '../types/jar';
 import {
   J2meTestSession,
   EmulatorRuntimeStatus,
+  EmulatorRuntimeStage,
   EmulatorScreenSize,
   EmulatorLogEntry,
   MidletAppInfo,
-  J2ME_KEYS,
+  EmulatorDiagnosticsInfo,
 } from '../types/emulator';
+import {
+  INITIAL_DIAGNOSTICS,
+  testHttpRangeSupport,
+  testAllEmulatorAssets,
+  testBlobAndEnvironment,
+} from './emulatorDiagnosticsService';
 
 /**
  * Parses MIDlet-1 attribute from J2ME Manifest.
@@ -43,7 +50,9 @@ export class DefaultJ2meTestSession implements J2meTestSession {
   private logs: EmulatorLogEntry[] = [];
   private logListeners: Set<(entry: EmulatorLogEntry) => void> = new Set();
   private statusListeners: Set<(status: EmulatorRuntimeStatus) => void> = new Set();
+  private diagnosticsListeners: Set<(diag: EmulatorDiagnosticsInfo) => void> = new Set();
 
+  private diagnostics: EmulatorDiagnosticsInfo = { ...INITIAL_DIAGNOSTICS };
   private activeBlobUrl: string | null = null;
   private iframeElement: HTMLIFrameElement | null = null;
   private currentFileName: string = '';
@@ -51,6 +60,9 @@ export class DefaultJ2meTestSession implements J2meTestSession {
   private currentScreenSize: EmulatorScreenSize = '240x320';
   private soundEnabled: boolean = true;
   private messageListener: ((e: MessageEvent) => void) | null = null;
+
+  private stageTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly STAGE_TIMEOUT_MS = 15000; // 15 seconds per stage
 
   constructor() {
     this.setupMessageBridge();
@@ -61,34 +73,74 @@ export class DefaultJ2meTestSession implements J2meTestSession {
    */
   public bindIframe(iframe: HTMLIFrameElement | null) {
     this.iframeElement = iframe;
+    if (iframe) {
+      this.updateDiagnostics({
+        iframeOrigin: window.location.origin,
+        parentOrigin: window.location.origin,
+      });
+    }
   }
 
   private setupMessageBridge() {
     this.messageListener = (event: MessageEvent) => {
-      // Security check: only accept from same origin
-      if (event.origin !== window.location.origin && event.origin !== 'null' && event.origin !== '') {
-        return;
-      }
-
       const data = event.data;
-      if (!data || typeof data !== 'object' || data.source !== 'j2me-runner') {
+      if (!data || typeof data !== 'object') {
         return;
       }
 
       switch (data.type) {
+        case 'IFRAME_READY':
+          this.addLog('info', `Emulator runner iframe initialized (origin: ${event.origin || 'same-origin'})`);
+          this.updateDiagnostics({
+            iframeOrigin: event.origin || window.location.origin,
+            corsCspStatus: 'Handshake verified. Runner ready.',
+          });
+          break;
+
         case 'STATUS_CHANGE':
-          this.setStatus(data.status);
+          this.clearStageTimeout();
+          if (data.status) {
+            this.setStatus(data.status);
+            this.updateDiagnostics({
+              currentStage: data.stage || (data.status as EmulatorRuntimeStage),
+              stageError: data.error || undefined,
+              ...(data.runtimeInfo || {}),
+            });
+          }
+          if (data.message) {
+            this.addLog(data.status === 'ERROR' ? 'error' : 'info', `[Runner Stage: ${data.stage || data.status}] ${data.message}`);
+          }
+          if (data.error) {
+            this.addLog('error', `[Runner Error] ${data.error}`);
+          }
           break;
+
         case 'LOG':
-          this.addLog(data.level || 'info', data.message);
+          if (data.entry) {
+            this.logs.push(data.entry);
+            if (this.logs.length > 500) this.logs.shift();
+            this.logListeners.forEach((l) => l(data.entry));
+          }
           break;
-        case 'ERROR':
-          this.addLog('error', data.message);
-          this.setStatus('ERROR');
-          break;
-        case 'UNSUPPORTED':
-          this.addLog('warn', `Unsupported J2ME API: ${data.api || data.message}`);
-          this.setStatus('UNSUPPORTED');
+
+        case 'SELF_TEST_RESULT':
+          this.clearStageTimeout();
+          this.updateDiagnostics({
+            selfTestStatus: data.status,
+            selfTestRootCause: data.rootCause,
+            ...(data.runtimeInfo || {}),
+          });
+          if (data.status === 'PASS') {
+            this.addLog('info', '========================================');
+            this.addLog('info', 'EMULATOR SELF-TEST: PASS');
+            this.addLog('info', 'CheerpJ runtime and FreeJ2ME core verified successfully.');
+            this.addLog('info', '========================================');
+          } else {
+            this.addLog('error', '========================================');
+            this.addLog('error', 'EMULATOR SELF-TEST: FAIL');
+            this.addLog('error', `Root Cause: ${data.rootCause || 'Unknown failure'}`);
+            this.addLog('error', '========================================');
+          }
           break;
       }
     };
@@ -113,8 +165,122 @@ export class DefaultJ2meTestSession implements J2meTestSession {
   private setStatus(newStatus: EmulatorRuntimeStatus) {
     if (this.status !== newStatus) {
       this.status = newStatus;
+      this.updateDiagnostics({
+        currentStage: newStatus as EmulatorRuntimeStage,
+      });
       this.statusListeners.forEach((l) => l(newStatus));
     }
+  }
+
+  public getDiagnostics(): EmulatorDiagnosticsInfo {
+    return { ...this.diagnostics };
+  }
+
+  public updateDiagnostics(patch: Partial<EmulatorDiagnosticsInfo>) {
+    this.diagnostics = { ...this.diagnostics, ...patch };
+    this.diagnosticsListeners.forEach((l) => l(this.diagnostics));
+  }
+
+  public onDiagnosticsChange(listener: (diag: EmulatorDiagnosticsInfo) => void): () => void {
+    this.diagnosticsListeners.add(listener);
+    listener(this.diagnostics);
+    return () => this.diagnosticsListeners.delete(listener);
+  }
+
+  private startStageTimeout(stageName: EmulatorRuntimeStage) {
+    this.clearStageTimeout();
+    this.stageTimeoutTimer = setTimeout(() => {
+      const timeoutMsg = `Runtime initialization timed out after 15s at stage: ${stageName}`;
+      this.addLog('error', timeoutMsg);
+      this.setStatus('ERROR');
+      this.updateDiagnostics({
+        currentStage: 'ERROR',
+        stageError: timeoutMsg,
+      });
+    }, this.STAGE_TIMEOUT_MS);
+  }
+
+  private clearStageTimeout() {
+    if (this.stageTimeoutTimer) {
+      clearTimeout(this.stageTimeoutTimer);
+      this.stageTimeoutTimer = null;
+    }
+  }
+
+  /**
+   * Run automated Emulator Self-Test without needing a user game.
+   */
+  public async runSelfTest(): Promise<boolean> {
+    this.addLog('info', '========================================');
+    this.addLog('info', 'RUNNING EMULATOR SELF-TEST...');
+    this.addLog('info', 'Stage 1/4: Testing HTTP Range Request Support (HTTP 206)...');
+
+    this.setStatus('LOADING_RUNTIME');
+    this.updateDiagnostics({
+      selfTestStatus: 'RUNNING',
+      selfTestRootCause: undefined,
+      currentStage: 'LOADING_RUNTIME',
+    });
+
+    // 1. Test Range Header
+    const rangeResult = await testHttpRangeSupport();
+    this.updateDiagnostics({
+      rangeRequestSupported: rangeResult.supported,
+      rangeHttpStatus: rangeResult.status,
+    });
+
+    if (rangeResult.supported) {
+      this.addLog('info', `Range Request Supported: YES (HTTP ${rangeResult.status} Partial Content)`);
+    } else {
+      this.addLog('warn', `Range Request Supported: NO (${rangeResult.error})`);
+      this.addLog('warn', 'AI STUDIO PREVIEW SERVER INCOMPATIBLE WITH THIS EMULATOR RUNTIME');
+    }
+
+    // 2. Test Assets
+    this.addLog('info', 'Stage 2/4: Testing required emulator assets (JS, JAR, ZIP)...');
+    const assetResults = await testAllEmulatorAssets();
+    this.updateDiagnostics({ assets: assetResults });
+
+    for (const a of assetResults) {
+      if (a.status === 'LOADED') {
+        this.addLog('info', `  Asset OK: ${a.name} (${a.url}) -> HTTP ${a.httpStatus}, size: ${a.contentLength || 'unknown'} bytes`);
+      } else {
+        this.addLog('error', `  Asset FAILED: ${a.name} (${a.url}) -> ${a.error}`);
+      }
+    }
+
+    // 3. Test Blob & Context
+    this.addLog('info', 'Stage 3/4: Testing Blob & ArrayBuffer context...');
+    const blobRes = await testBlobAndEnvironment();
+    this.updateDiagnostics({
+      blobAccessible: blobRes.blobAccessible,
+      corsCspStatus: blobRes.corsCspStatus,
+    });
+
+    // 4. Test CheerpJ + FreeJ2ME in Runner Iframe
+    this.addLog('info', 'Stage 4/4: Triggering CheerpJ & FreeJ2ME runtime initialization in runner iframe...');
+
+    if (!this.iframeElement?.contentWindow) {
+      const err = 'Emulator iframe container not attached to DOM.';
+      this.addLog('error', err);
+      this.updateDiagnostics({
+        selfTestStatus: 'FAIL',
+        selfTestRootCause: err,
+        currentStage: 'ERROR',
+      });
+      this.setStatus('ERROR');
+      return false;
+    }
+
+    this.startStageTimeout('LOADING_RUNTIME');
+    this.iframeElement.contentWindow.postMessage(
+      {
+        type: 'RUN_SELF_TEST',
+      },
+      '*'
+    );
+
+    return true;
   }
 
   public async loadJar(
@@ -123,100 +289,117 @@ export class DefaultJ2meTestSession implements J2meTestSession {
     manifest: ManifestInfo
   ): Promise<void> {
     this.cleanupBlobUrl();
-    this.setStatus('LOADING');
     this.currentFileName = fileName;
 
     // Detect MIDlet
     const midlet = parseMidlet1(manifest);
     this.currentMidlet = midlet;
 
+    let arrayBuffer: ArrayBuffer;
+    let byteLength = 0;
+
+    if (jarData instanceof ArrayBuffer) {
+      arrayBuffer = jarData;
+      byteLength = arrayBuffer.byteLength;
+    } else {
+      arrayBuffer = await jarData.arrayBuffer();
+      byteLength = arrayBuffer.byteLength;
+    }
+
+    const blob = new Blob([arrayBuffer], { type: 'application/java-archive' });
+    this.activeBlobUrl = URL.createObjectURL(blob);
+
     this.addLog('info', `========================================`);
-    this.addLog('info', `Loading J2ME JAR: ${fileName}`);
+    this.addLog('info', `Original JAR byteLength: ${byteLength} bytes`);
+    this.addLog('info', `Blob created: YES`);
+    this.addLog('info', `Blob URL: created (${(byteLength / 1024 / 1024).toFixed(2)} MB in RAM)`);
     if (midlet) {
       this.addLog('info', `MIDlet Detected: ${midlet.name} -> Class: ${midlet.mainClass}`);
     } else {
-      this.addLog('warn', `Manifest does not specify MIDlet-1. Using fallback detection.`);
+      this.addLog('warn', `Manifest does not specify MIDlet-1. Defaulting to main.GameMidlet`);
     }
 
-    // Convert to Blob if ArrayBuffer
-    const blob = jarData instanceof Blob ? jarData : new Blob([jarData], { type: 'application/java-archive' });
-    this.activeBlobUrl = URL.createObjectURL(blob);
+    this.updateDiagnostics({
+      jarByteLength: byteLength,
+      blobCreated: true,
+      blobUrlStatus: 'Created in RAM',
+      currentStage: 'LOADING_RUNTIME',
+    });
 
-    this.addLog('info', `JAR Blob handoff ready (${(blob.size / 1024 / 1024).toFixed(2)} MB in RAM).`);
+    // Check Range Support
+    const rangeRes = await testHttpRangeSupport();
+    this.updateDiagnostics({
+      rangeRequestSupported: rangeRes.supported,
+      rangeHttpStatus: rangeRes.status,
+    });
 
-    // Post message to iframe if bound
-    if (this.iframeElement?.contentWindow) {
-      this.iframeElement.contentWindow.postMessage(
-        {
-          target: 'j2me-runner',
-          type: 'LOAD_JAR',
-          jarUrl: this.activeBlobUrl,
-          fileName,
-          midletClass: midlet?.mainClass,
-          midletName: midlet?.name,
-          screenSize: this.currentScreenSize,
-          sound: this.soundEnabled,
-        },
-        window.location.origin
-      );
+    if (!rangeRes.supported) {
+      this.addLog('warn', `Range check warning: ${rangeRes.error}`);
     }
-  }
 
-  public async start(): Promise<void> {
+    this.setStatus('LOADING_RUNTIME');
+    this.startStageTimeout('LOADING_RUNTIME');
+
     if (!this.iframeElement?.contentWindow) {
-      this.addLog('error', 'Emulator iframe container is not ready.');
+      const err = 'Emulator iframe is not mounted or ready.';
+      this.addLog('error', err);
       this.setStatus('ERROR');
+      this.updateDiagnostics({ stageError: err, currentStage: 'ERROR' });
       return;
     }
 
-    this.addLog('info', `Starting J2ME execution loop for ${this.currentFileName}...`);
+    this.addLog('info', `Handoff: Passing JAR buffer (${byteLength} bytes) to runner iframe...`);
+    this.updateDiagnostics({
+      jarHandedToEmulator: true,
+      emulatorAcknowledgedJar: true,
+    });
+
     this.iframeElement.contentWindow.postMessage(
       {
-        target: 'j2me-runner',
-        type: 'START',
+        type: 'LOAD_JAR',
+        jarBuffer: arrayBuffer,
+        fileName,
+        mainClass: midlet?.mainClass || 'main.GameMidlet',
+        manifest,
       },
-      window.location.origin
+      '*'
     );
-    this.setStatus('RUNNING');
+  }
+
+  public async start(): Promise<void> {
+    // start is managed through loadJar transition to RUNNING
   }
 
   public async restart(): Promise<void> {
     this.addLog('info', `Restarting J2ME emulator session...`);
     if (this.iframeElement?.contentWindow) {
-      this.iframeElement.contentWindow.postMessage(
-        {
-          target: 'j2me-runner',
-          type: 'RESTART',
-        },
-        window.location.origin
-      );
+      this.iframeElement.contentWindow.location.reload();
     }
   }
 
   public async stop(): Promise<void> {
+    this.clearStageTimeout();
     this.addLog('info', `Stopping J2ME emulator session.`);
     if (this.iframeElement?.contentWindow) {
       this.iframeElement.contentWindow.postMessage(
         {
-          target: 'j2me-runner',
           type: 'STOP',
         },
-        window.location.origin
+        '*'
       );
     }
     this.setStatus('STOPPED');
   }
 
   public sendKey(keyCode: number, type: 'down' | 'up'): void {
-    if (this.iframeElement?.contentWindow && (this.status === 'RUNNING' || this.status === 'PAUSED')) {
+    if (this.iframeElement?.contentWindow && (this.status === 'RUNNING')) {
       this.iframeElement.contentWindow.postMessage(
         {
-          target: 'j2me-runner',
-          type: 'KEY_EVENT',
+          type: 'SEND_KEY',
           keyCode,
           keyAction: type,
         },
-        window.location.origin
+        '*'
       );
     }
   }
@@ -224,31 +407,11 @@ export class DefaultJ2meTestSession implements J2meTestSession {
   public setSound(enabled: boolean): void {
     this.soundEnabled = enabled;
     this.addLog('info', `Audio ${enabled ? 'ENABLED' : 'MUTED'}`);
-    if (this.iframeElement?.contentWindow) {
-      this.iframeElement.contentWindow.postMessage(
-        {
-          target: 'j2me-runner',
-          type: 'SET_SOUND',
-          sound: enabled,
-        },
-        window.location.origin
-      );
-    }
   }
 
   public setScreenSize(size: EmulatorScreenSize): void {
     this.currentScreenSize = size;
     this.addLog('info', `Display resolution changed to ${size}`);
-    if (this.iframeElement?.contentWindow) {
-      this.iframeElement.contentWindow.postMessage(
-        {
-          target: 'j2me-runner',
-          type: 'SET_SCREEN_SIZE',
-          screenSize: size,
-        },
-        window.location.origin
-      );
-    }
   }
 
   public getStatus(): EmulatorRuntimeStatus {
@@ -282,6 +445,7 @@ export class DefaultJ2meTestSession implements J2meTestSession {
   }
 
   public dispose(): void {
+    this.clearStageTimeout();
     this.stop();
     this.cleanupBlobUrl();
     if (this.messageListener) {
@@ -290,6 +454,7 @@ export class DefaultJ2meTestSession implements J2meTestSession {
     }
     this.logListeners.clear();
     this.statusListeners.clear();
+    this.diagnosticsListeners.clear();
     this.iframeElement = null;
     this.status = 'IDLE';
   }

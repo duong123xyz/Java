@@ -5,17 +5,18 @@ import {
   Square,
   Volume2,
   VolumeX,
-  Smartphone,
-  Maximize2,
   Terminal,
   Trash2,
   Copy,
   CheckCircle2,
   AlertTriangle,
   FileArchive,
-  Sparkles,
-  Info,
   ShieldCheck,
+  XCircle,
+  Activity,
+  Cpu,
+  Globe,
+  Radio,
 } from 'lucide-react';
 import { LoadedJarSession } from '../../types/jar';
 import {
@@ -24,10 +25,11 @@ import {
   EmulatorScreenSize,
   EmulatorPhoneType,
   EmulatorLogEntry,
+  EmulatorDiagnosticsInfo,
   J2ME_KEYS,
 } from '../../types/emulator';
 import { DefaultJ2meTestSession, parseMidlet1 } from '../../services/j2meSessionService';
-import { getDirtyCount } from '../../services/itemDraftService';
+import { INITIAL_DIAGNOSTICS } from '../../services/emulatorDiagnosticsService';
 
 interface TestGameTabProps {
   session: LoadedJarSession;
@@ -35,13 +37,24 @@ interface TestGameTabProps {
   onNavigateToPatchBuilder?: () => void;
 }
 
+const STAGES: { key: string; label: string }[] = [
+  { key: 'IDLE', label: 'Idle' },
+  { key: 'LOADING_RUNTIME', label: 'Loading Runtime' },
+  { key: 'RUNTIME_READY', label: 'Runtime Ready' },
+  { key: 'MOUNTING_JAR', label: 'Mounting JAR' },
+  { key: 'JAR_MOUNTED', label: 'JAR Mounted' },
+  { key: 'STARTING_MIDLET', label: 'Starting MIDlet' },
+  { key: 'RUNNING', label: 'Running' },
+];
+
 export function TestGameTab({
   session,
   initialSource = 'ORIGINAL',
-  onNavigateToPatchBuilder,
 }: TestGameTabProps) {
-  const [source, setSource] = useState<EmulatorSourceType>(initialSource);
+  // Requirement 13: Strictly isolate to ORIGINAL JAR
+  const [source] = useState<EmulatorSourceType>('ORIGINAL');
   const [runtimeStatus, setRuntimeStatus] = useState<EmulatorRuntimeStatus>('IDLE');
+  const [diagnostics, setDiagnostics] = useState<EmulatorDiagnosticsInfo>(INITIAL_DIAGNOSTICS);
   const [screenSize, setScreenSize] = useState<EmulatorScreenSize>('240x320');
   const [phoneType, setPhoneType] = useState<EmulatorPhoneType>('nokia');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
@@ -49,20 +62,7 @@ export function TestGameTab({
   const [logs, setLogs] = useState<EmulatorLogEntry[]>([]);
   const [copiedLogs, setCopiedLogs] = useState<boolean>(false);
   const [pressedKeyCodes, setPressedKeyCodes] = useState<Set<number>>(new Set());
-
-  // Stale detection
-  const currentDirtyCount = getDirtyCount(session.itemDrafts);
-  const candidateOutput = session.candidateOutput;
-  const isPatchedValid =
-    candidateOutput &&
-    candidateOutput.status === 'VALIDATED' &&
-    candidateOutput.blob &&
-    candidateOutput.expectedModifiedCount === currentDirtyCount;
-
-  const isPatchedStale =
-    candidateOutput &&
-    candidateOutput.status === 'VALIDATED' &&
-    candidateOutput.expectedModifiedCount !== currentDirtyCount;
+  const [isSelfTesting, setIsSelfTesting] = useState<boolean>(false);
 
   // Emulator Session Reference
   const testSessionRef = useRef<DefaultJ2meTestSession | null>(null);
@@ -75,16 +75,21 @@ export function TestGameTab({
     testSessionRef.current = sess;
 
     const unsubLog = sess.onLog((entry) => {
-      setLogs((prev) => [...prev.slice(-300), entry]);
+      setLogs((prev) => [...prev.slice(-400), entry]);
     });
 
     const unsubStatus = sess.onStatusChange((status) => {
       setRuntimeStatus(status);
     });
 
+    const unsubDiag = sess.onDiagnosticsChange((diag) => {
+      setDiagnostics({ ...diag });
+    });
+
     return () => {
       unsubLog();
       unsubStatus();
+      unsubDiag();
       sess.dispose();
       testSessionRef.current = null;
     };
@@ -97,89 +102,54 @@ export function TestGameTab({
     }
   }, []);
 
-  // Handle Load JAR when Source changes
+  // Handle Load JAR when Source changes or on mount
   const loadActiveJar = useCallback(async () => {
     const sess = testSessionRef.current;
     if (!sess) return;
 
-    if (source === 'ORIGINAL') {
-      sess.addLog('info', `[Source: ORIGINAL] Đang nạp file gốc: ${session.jarInfo.fileName}`);
-      await sess.loadJar(
-        session.originalFile,
-        session.jarInfo.fileName,
-        session.jarInfo.manifest
-      );
-    } else {
-      if (!candidateOutput || !candidateOutput.blob) {
-        sess.addLog('error', 'Chưa có Patched JAR nào được xuất và thẩm định.');
-        return;
-      }
-      sess.addLog('info', `[Source: PATCHED] Đang nạp patched build: ${candidateOutput.fileName}`);
-      await sess.loadJar(
-        candidateOutput.blob,
-        candidateOutput.fileName,
-        session.jarInfo.manifest
-      );
-    }
-  }, [source, session, candidateOutput]);
+    sess.addLog('info', `[Source: ORIGINAL] Đang nạp file gốc: ${session.jarInfo.fileName}`);
+    await sess.loadJar(
+      session.originalFile,
+      session.jarInfo.fileName,
+      session.jarInfo.manifest
+    );
+  }, [session.jarInfo.fileName, session.jarInfo.manifest, session.originalFile]);
 
-  // Trigger load when iframe is mounted and source changes
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      loadActiveJar();
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [loadActiveJar]);
-
-  // Handle Switch Source
-  const handleSwitchSource = (newSource: EmulatorSourceType) => {
-    if (newSource === source) return;
-    if (newSource === 'PATCHED' && !isPatchedValid) {
-      return;
-    }
-    setSource(newSource);
-  };
-
-  // Actions
-  const handleStart = async () => {
-    if (testSessionRef.current) {
-      await testSessionRef.current.start();
+  // Self-Test Handler
+  const handleRunSelfTest = async () => {
+    const sess = testSessionRef.current;
+    if (!sess) return;
+    setIsSelfTesting(true);
+    try {
+      await sess.runSelfTest();
+    } finally {
+      setIsSelfTesting(false);
     }
   };
 
-  const handleRestart = async () => {
-    if (testSessionRef.current) {
-      await testSessionRef.current.restart();
-    }
+  // Playback Handlers
+  const handleStart = () => {
+    loadActiveJar();
   };
 
-  const handleStop = async () => {
-    if (testSessionRef.current) {
-      await testSessionRef.current.stop();
-    }
+  const handleRestart = () => {
+    testSessionRef.current?.restart();
+  };
+
+  const handleStop = () => {
+    testSessionRef.current?.stop();
   };
 
   const handleToggleSound = () => {
     const next = !soundEnabled;
     setSoundEnabled(next);
-    if (testSessionRef.current) {
-      testSessionRef.current.setSound(next);
-    }
+    testSessionRef.current?.setSound(next);
   };
 
   const handleScreenSizeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const size = e.target.value as EmulatorScreenSize;
     setScreenSize(size);
-    if (testSessionRef.current) {
-      testSessionRef.current.setScreenSize(size);
-    }
-  };
-
-  const handleClearLogs = () => {
-    if (testSessionRef.current) {
-      testSessionRef.current.clearLogs();
-    }
-    setLogs([]);
+    testSessionRef.current?.setScreenSize(size);
   };
 
   const handleCopyLogs = () => {
@@ -189,11 +159,14 @@ export function TestGameTab({
     setTimeout(() => setCopiedLogs(false), 2000);
   };
 
-  // Send Key to Emulator
+  const handleClearLogs = () => {
+    testSessionRef.current?.clearLogs();
+    setLogs([]);
+  };
+
+  // Virtual Keypad Sender
   const sendKey = useCallback((keyCode: number, type: 'down' | 'up') => {
-    if (testSessionRef.current) {
-      testSessionRef.current.sendKey(keyCode, type);
-    }
+    testSessionRef.current?.sendKey(keyCode, type);
     setPressedKeyCodes((prev) => {
       const next = new Set(prev);
       if (type === 'down') {
@@ -209,8 +182,6 @@ export function TestGameTab({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isFocused) return;
-
-      // Do NOT capture if typing in input, textarea or select
       const activeTag = document.activeElement?.tagName.toLowerCase();
       if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
         return;
@@ -398,71 +369,61 @@ export function TestGameTab({
     <div className="space-y-5">
       {/* Top Toolbar: Desktop Style Controls */}
       <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-4">
-        {/* Source Selector */}
+        {/* Source Selector (Locked to ORIGINAL as requested) */}
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-zinc-400 font-semibold">Source:</span>
           <div className="inline-flex rounded-lg bg-zinc-950 p-1 border border-zinc-800">
             <button
               id="source-original-button"
               type="button"
-              onClick={() => handleSwitchSource('ORIGINAL')}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-                source === 'ORIGINAL'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
+              className="px-3 py-1.5 rounded-md text-xs font-mono font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm flex items-center gap-1.5 cursor-default"
             >
               <FileArchive className="w-3.5 h-3.5" />
-              <span>Original JAR</span>
+              <span>Original JAR (Active)</span>
             </button>
 
             <button
               id="source-patched-button"
               type="button"
-              disabled={!isPatchedValid && !candidateOutput}
-              onClick={() => handleSwitchSource('PATCHED')}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-colors flex items-center gap-1.5 ${
-                source === 'PATCHED'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                  : isPatchedValid
-                  ? 'text-zinc-400 hover:text-zinc-200 cursor-pointer'
-                  : 'text-zinc-600 cursor-not-allowed opacity-60'
-              }`}
-              title={
-                !candidateOutput
-                  ? 'Chưa build Patched JAR ở Bước 11'
-                  : isPatchedStale
-                  ? 'Patched JAR đã cũ so với bản nháp hiện tại'
-                  : 'Chạy bản Patched JAR đã xác thực'
-              }
+              disabled={true}
+              className="px-3 py-1.5 rounded-md text-xs font-mono font-medium text-zinc-600 cursor-not-allowed opacity-50 flex items-center gap-1.5"
+              title="Tạm thời disable Patched mode. Chỉ debug: ORIGINAL JAR cho tới khi Original chạy được."
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Patched JAR</span>
-              {isPatchedValid && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              )}
+              <span>Patched JAR (Disabled)</span>
             </button>
           </div>
         </div>
 
-        {/* Playback Controls */}
+        {/* Playback Controls & Self-Test */}
         <div className="flex items-center gap-2">
+          <button
+            id="emulator-self-test-button"
+            type="button"
+            onClick={handleRunSelfTest}
+            disabled={isSelfTesting || runtimeStatus === 'LOADING_RUNTIME' || runtimeStatus === 'MOUNTING_JAR'}
+            className="px-3 py-1.5 rounded-lg text-xs font-mono font-medium bg-sky-950/60 hover:bg-sky-900/60 text-sky-300 border border-sky-800/80 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-1.5 transition-colors cursor-pointer shadow"
+            title="Kiểm tra CheerpJ, FreeJ2ME, Range request, và Assets mà không cần nạp game"
+          >
+            <Activity className={`w-3.5 h-3.5 ${isSelfTesting ? 'animate-spin' : ''}`} />
+            <span>{isSelfTesting ? 'Testing...' : 'Run Emulator Self-Test'}</span>
+          </button>
+
           <button
             id="emulator-start-button"
             type="button"
             onClick={handleStart}
-            disabled={runtimeStatus === 'RUNNING' || runtimeStatus === 'LOADING'}
+            disabled={runtimeStatus === 'RUNNING' || runtimeStatus === 'LOADING_RUNTIME' || runtimeStatus === 'MOUNTING_JAR' || runtimeStatus === 'STARTING_MIDLET'}
             className="px-3.5 py-1.5 rounded-lg text-xs font-mono font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:pointer-events-none text-zinc-950 font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Start</span>
+            <span>Run Original JAR</span>
           </button>
 
           <button
             id="emulator-restart-button"
             type="button"
             onClick={handleRestart}
-            disabled={runtimeStatus === 'IDLE' || runtimeStatus === 'LOADING'}
+            disabled={runtimeStatus === 'IDLE'}
             className="px-3 py-1.5 rounded-lg text-xs font-mono font-medium bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:pointer-events-none text-zinc-200 border border-zinc-700 flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -481,9 +442,8 @@ export function TestGameTab({
           </button>
         </div>
 
-        {/* Screen & Phone Configurations */}
+        {/* Screen & Sound Config */}
         <div className="flex items-center gap-3">
-          {/* Screen Size */}
           <div className="flex items-center gap-1.5 text-xs font-mono">
             <span className="text-zinc-500">Screen:</span>
             <select
@@ -499,7 +459,6 @@ export function TestGameTab({
             </select>
           </div>
 
-          {/* Phone Profile */}
           <div className="flex items-center gap-1.5 text-xs font-mono">
             <span className="text-zinc-500">Device:</span>
             <select
@@ -514,7 +473,6 @@ export function TestGameTab({
             </select>
           </div>
 
-          {/* Sound Toggle */}
           <button
             type="button"
             onClick={handleToggleSound}
@@ -530,34 +488,88 @@ export function TestGameTab({
         </div>
       </div>
 
-      {/* Safety & Stale Warnings */}
-      {source === 'PATCHED' && isPatchedStale && (
-        <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs font-mono text-amber-300 flex items-center justify-between gap-3">
+      {/* State Machine Status Progression Bar */}
+      <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl p-3.5 space-y-2.5">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>
-              <strong>Running stale patched build:</strong> Bản nháp draft đã thay đổi ({currentDirtyCount} ô đã sửa) nhưng file patched hiện tại dựa trên phiên bản trước ({candidateOutput?.expectedModifiedCount} ô).
+            <Cpu className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-mono font-semibold text-zinc-200">
+              J2ME State Machine Progression
             </span>
           </div>
-          {onNavigateToPatchBuilder && (
-            <button
-              type="button"
-              onClick={onNavigateToPatchBuilder}
-              className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 rounded text-[11px] font-medium transition-colors cursor-pointer shrink-0"
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-mono text-zinc-400">Current Stage:</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                runtimeStatus === 'RUNNING'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                  : runtimeStatus === 'ERROR'
+                  ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                  : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+              }`}
             >
-              Rebuild Patched JAR &rarr;
-            </button>
-          )}
+              {runtimeStatus}
+            </span>
+          </div>
         </div>
-      )}
 
-      {/* Main Runner Grid: Left Phone Shell, Right Status & Console */}
+        {/* Step Progression Visualizer */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5 text-[11px] font-mono">
+          {STAGES.map((s, idx) => {
+            const isActive = runtimeStatus === s.key;
+            const isPast =
+              runtimeStatus === 'RUNNING' ||
+              STAGES.findIndex((st) => st.key === runtimeStatus) > idx;
+
+            return (
+              <div
+                key={s.key}
+                className={`p-2 rounded-lg border text-center transition-all ${
+                  isActive
+                    ? 'bg-sky-950/80 border-sky-500 text-sky-200 font-bold shadow-sm'
+                    : isPast
+                    ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-300'
+                    : 'bg-zinc-950 border-zinc-850 text-zinc-600'
+                }`}
+              >
+                <div className="text-[9px] text-zinc-500 uppercase">Step {idx + 1}</div>
+                <div className="truncate">{s.label}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Error / Timeout banner if stage is ERROR */}
+        {runtimeStatus === 'ERROR' && (
+          <div className="p-3 rounded-lg bg-red-950/40 border border-red-800/60 text-xs font-mono text-red-300 space-y-1">
+            <div className="flex items-center gap-2 font-bold">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>Initialization Failed or Timed Out (15s Watchdog)</span>
+            </div>
+            <p className="text-[11px] text-red-300/90 pl-6">
+              {diagnostics.stageError || 'The emulator runtime failed to advance to the RUNNING state within the 15-second limit.'}
+            </p>
+          </div>
+        )}
+
+        {/* Range Header Notice */}
+        {diagnostics.rangeRequestSupported === false && (
+          <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs font-mono text-amber-300 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>AI STUDIO PREVIEW SERVER INCOMPATIBLE WITH THIS EMULATOR RUNTIME:</strong> HTTP Range header test returned status {diagnostics.rangeHttpStatus} instead of 206 Partial Content.
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Main Runner Grid: Left Phone Shell, Right Diagnostics & Console */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* Left Column: Phone Shell & LCD Canvas */}
         <div
           ref={containerRef}
           onClick={() => setIsFocused(true)}
-          className={`lg:col-span-6 xl:col-span-5 flex flex-col items-center p-5 rounded-2xl bg-zinc-900/80 border transition-all ${
+          className={`lg:col-span-5 xl:col-span-5 flex flex-col items-center p-5 rounded-2xl bg-zinc-900/80 border transition-all ${
             isFocused
               ? 'border-emerald-500/80 ring-2 ring-emerald-500/20 shadow-lg'
               : 'border-zinc-800 shadow'
@@ -612,7 +624,6 @@ export function TestGameTab({
 
               {/* D-Pad 5-way Controller */}
               <div className="relative w-28 h-28 flex items-center justify-center">
-                {/* D-Pad Background Circle */}
                 <div className="absolute inset-0 rounded-full bg-zinc-800 border border-zinc-700 shadow-inner" />
 
                 {/* Up */}
@@ -654,6 +665,21 @@ export function TestGameTab({
                   ◀
                 </button>
 
+                {/* Center / Fire */}
+                <button
+                  type="button"
+                  onMouseDown={() => sendKey(J2ME_KEYS.FIRE, 'down')}
+                  onMouseUp={() => sendKey(J2ME_KEYS.FIRE, 'up')}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-[10px] font-bold z-10 shadow active:scale-90 transition-transform cursor-pointer ${
+                    pressedKeyCodes.has(J2ME_KEYS.FIRE)
+                      ? 'bg-emerald-500 text-zinc-950 font-extrabold'
+                      : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-200 border border-zinc-600'
+                  }`}
+                  title="Fire (Enter)"
+                >
+                  OK
+                </button>
+
                 {/* Right */}
                 <button
                   type="button"
@@ -665,21 +691,6 @@ export function TestGameTab({
                   title="Right (Arrow Right)"
                 >
                   ▶
-                </button>
-
-                {/* Center Fire Key */}
-                <button
-                  type="button"
-                  onMouseDown={() => sendKey(J2ME_KEYS.FIRE, 'down')}
-                  onMouseUp={() => sendKey(J2ME_KEYS.FIRE, 'up')}
-                  className={`w-9 h-9 rounded-full bg-zinc-700 hover:bg-zinc-650 border border-zinc-600 flex items-center justify-center text-[10px] font-bold text-zinc-100 shadow active:scale-90 transition-transform cursor-pointer ${
-                    pressedKeyCodes.has(J2ME_KEYS.FIRE)
-                      ? 'bg-emerald-500 text-zinc-950 font-extrabold'
-                      : ''
-                  }`}
-                  title="Fire / Enter"
-                >
-                  OK
                 </button>
               </div>
 
@@ -698,134 +709,267 @@ export function TestGameTab({
               </button>
             </div>
 
-            {/* Numeric 12-Key Pad (1-9, *, 0, #) */}
-            <div className="w-full grid grid-cols-3 gap-1.5 mt-4 px-3">
+            {/* Numeric 12-Key Pad (0-9, *, #) */}
+            <div className="w-full mt-3 grid grid-cols-3 gap-1.5 px-2">
               {[
-                { label: '1', sub: '', code: J2ME_KEYS.KEY_NUM1 },
-                { label: '2', sub: 'abc', code: J2ME_KEYS.KEY_NUM2 },
-                { label: '3', sub: 'def', code: J2ME_KEYS.KEY_NUM3 },
-                { label: '4', sub: 'ghi', code: J2ME_KEYS.KEY_NUM4 },
-                { label: '5', sub: 'jkl', code: J2ME_KEYS.KEY_NUM5 },
-                { label: '6', sub: 'mno', code: J2ME_KEYS.KEY_NUM6 },
-                { label: '7', sub: 'pqrs', code: J2ME_KEYS.KEY_NUM7 },
-                { label: '8', sub: 'tuv', code: J2ME_KEYS.KEY_NUM8 },
-                { label: '9', sub: 'wxyz', code: J2ME_KEYS.KEY_NUM9 },
-                { label: '*', sub: '(E)', code: J2ME_KEYS.KEY_STAR },
-                { label: '0', sub: '␣', code: J2ME_KEYS.KEY_NUM0 },
-                { label: '#', sub: '(R)', code: J2ME_KEYS.KEY_POUND },
-              ].map((key) => {
-                const isPressed = pressedKeyCodes.has(key.code);
-                return (
-                  <button
-                    key={key.label}
-                    type="button"
-                    onMouseDown={() => sendKey(key.code, 'down')}
-                    onMouseUp={() => sendKey(key.code, 'up')}
-                    className={`py-1.5 px-2 rounded-lg border flex flex-col items-center justify-center active:scale-95 transition-transform cursor-pointer shadow-sm ${
-                      isPressed
-                        ? 'bg-emerald-500/40 border-emerald-400 text-emerald-100'
-                        : 'bg-zinc-800/90 border-zinc-700/80 text-zinc-200 hover:bg-zinc-750'
-                    }`}
-                  >
-                    <span className="text-xs font-mono font-bold leading-none">{key.label}</span>
-                    <span className="text-[8px] font-mono text-zinc-400 uppercase leading-none mt-0.5">
-                      {key.sub || '-'}
-                    </span>
-                  </button>
-                );
-              })}
+                { code: J2ME_KEYS.KEY_NUM1, label: '1', sub: '.,' },
+                { code: J2ME_KEYS.KEY_NUM2, label: '2', sub: 'abc' },
+                { code: J2ME_KEYS.KEY_NUM3, label: '3', sub: 'def' },
+                { code: J2ME_KEYS.KEY_NUM4, label: '4', sub: 'ghi' },
+                { code: J2ME_KEYS.KEY_NUM5, label: '5', sub: 'jkl' },
+                { code: J2ME_KEYS.KEY_NUM6, label: '6', sub: 'mno' },
+                { code: J2ME_KEYS.KEY_NUM7, label: '7', sub: 'pqrs' },
+                { code: J2ME_KEYS.KEY_NUM8, label: '8', sub: 'tuv' },
+                { code: J2ME_KEYS.KEY_NUM9, label: '9', sub: 'wxyz' },
+                { code: J2ME_KEYS.KEY_STAR, label: '*', sub: 'e' },
+                { code: J2ME_KEYS.KEY_NUM0, label: '0', sub: '␣' },
+                { code: J2ME_KEYS.KEY_POUND, label: '#', sub: 'r' },
+              ].map((k) => (
+                <button
+                  key={k.code}
+                  type="button"
+                  onMouseDown={() => sendKey(k.code, 'down')}
+                  onMouseUp={() => sendKey(k.code, 'up')}
+                  className={`py-1.5 px-1 rounded-md border text-center transition-transform active:scale-95 shadow-sm cursor-pointer ${
+                    pressedKeyCodes.has(k.code)
+                      ? 'bg-emerald-500/40 text-emerald-200 border-emerald-400'
+                      : 'bg-zinc-800/90 hover:bg-zinc-750 text-zinc-200 border-zinc-700'
+                  }`}
+                >
+                  <div className="text-xs font-mono font-bold leading-none">{k.label}</div>
+                  <div className="text-[8px] font-mono text-zinc-500 uppercase leading-none mt-0.5">
+                    {k.sub}
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Right Column: Status & Runtime Console */}
-        <div className="lg:col-span-6 xl:col-span-7 space-y-4">
-          {/* Status Diagnostic Card */}
-          <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-              <h3 className="text-xs font-mono font-semibold text-zinc-200 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>Test Session Status</span>
-              </h3>
+        {/* Right Column: Comprehensive Diagnostics & Runtime Console */}
+        <div className="lg:col-span-7 xl:col-span-7 space-y-4">
+          {/* Section 2: Real Runtime Implementation Diagnostic Matrix */}
+          <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 space-y-3.5">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
               <div className="flex items-center gap-2">
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
-                    runtimeStatus === 'RUNNING'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                      : runtimeStatus === 'ERROR'
-                      ? 'bg-red-500/20 text-red-300 border border-red-500/40'
-                      : runtimeStatus === 'UNSUPPORTED'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                  }`}
-                >
-                  Runtime: {runtimeStatus}
+                <ShieldCheck className="w-4 h-4 text-sky-400" />
+                <span className="text-xs font-mono font-semibold text-zinc-200">
+                  Runtime Implementation Diagnostics
                 </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {diagnostics.selfTestStatus && diagnostics.selfTestStatus !== 'IDLE' && (
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                      diagnostics.selfTestStatus === 'PASS'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : diagnostics.selfTestStatus === 'FAIL'
+                        ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                    }`}
+                  >
+                    SELF-TEST: {diagnostics.selfTestStatus}
+                  </span>
+                )}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
-              <div className="bg-zinc-950 p-2 rounded border border-zinc-850">
-                <div className="text-[10px] text-zinc-500 uppercase">Active Source</div>
-                <div
-                  className={`font-semibold truncate ${
-                    source === 'PATCHED' ? 'text-amber-400' : 'text-emerald-400'
-                  }`}
-                >
-                  {source}
-                </div>
+            {/* Diagnostic Matrix Table */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs font-mono">
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">Emulator Backend</div>
+                <div className="font-semibold text-zinc-200 truncate">{diagnostics.backend}</div>
               </div>
 
-              <div className="bg-zinc-950 p-2 rounded border border-zinc-855">
-                <div className="text-[10px] text-zinc-500 uppercase">Patch Validated</div>
-                <div className="font-semibold text-zinc-200">
-                  {candidateOutput?.status === 'VALIDATED' ? (
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">Emulator Version</div>
+                <div className="font-semibold text-zinc-200">{diagnostics.version}</div>
+              </div>
+
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">CheerpJ Loaded</div>
+                <div className="font-semibold">
+                  {diagnostics.cheerpjLoaded ? (
                     <span className="text-emerald-400 flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" /> YES
                     </span>
                   ) : (
-                    <span className="text-zinc-500">NO / N/A</span>
+                    <span className="text-zinc-500 flex items-center gap-1">
+                      <XCircle className="w-3 h-3" /> NO
+                    </span>
                   )}
                 </div>
               </div>
 
-              <div className="bg-zinc-950 p-2 rounded border border-zinc-850">
-                <div className="text-[10px] text-zinc-500 uppercase">MIDlet Class</div>
-                <div className="font-semibold text-zinc-200 truncate" title={midlet?.mainClass}>
-                  {midlet?.mainClass || 'Auto-detect'}
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">FreeJ2ME Loaded</div>
+                <div className="font-semibold">
+                  {diagnostics.freej2meLoaded ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> YES
+                    </span>
+                  ) : (
+                    <span className="text-zinc-500 flex items-center gap-1">
+                      <XCircle className="w-3 h-3" /> NO
+                    </span>
+                  )}
                 </div>
               </div>
 
-              <div className="bg-zinc-950 p-2 rounded border border-zinc-850">
-                <div className="text-[10px] text-zinc-500 uppercase">Audio Stack</div>
-                <div className="font-semibold text-zinc-200">
-                  {soundEnabled ? (
-                    <span className="text-emerald-400">SYNTH ON</span>
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">Runtime Script</div>
+                <div className="font-semibold">
+                  {diagnostics.runtimeScriptLoaded ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> YES
+                    </span>
                   ) : (
-                    <span className="text-zinc-500">MUTED</span>
+                    <span className="text-zinc-500 flex items-center gap-1">
+                      <XCircle className="w-3 h-3" /> NO
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">Runtime Initialized</div>
+                <div className="font-semibold">
+                  {diagnostics.runtimeInitialized ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> YES
+                    </span>
+                  ) : (
+                    <span className="text-zinc-500 flex items-center gap-1">
+                      <XCircle className="w-3 h-3" /> NO
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">Game JAR Mounted</div>
+                <div className="font-semibold">
+                  {diagnostics.gameJarMounted ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> YES
+                    </span>
+                  ) : (
+                    <span className="text-zinc-500 flex items-center gap-1">
+                      <XCircle className="w-3 h-3" /> NO
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">MIDlet Started</div>
+                <div className="font-semibold">
+                  {diagnostics.midletStarted ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> YES
+                    </span>
+                  ) : (
+                    <span className="text-zinc-500 flex items-center gap-1">
+                      <XCircle className="w-3 h-3" /> NO
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-zinc-950 p-2.5 rounded border border-zinc-850">
+                <div className="text-[10px] text-zinc-500 uppercase">Canvas Connected</div>
+                <div className="font-semibold">
+                  {diagnostics.canvasConnected ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> YES
+                    </span>
+                  ) : (
+                    <span className="text-zinc-500 flex items-center gap-1">
+                      <XCircle className="w-3 h-3" /> NO
+                    </span>
                   )}
                 </div>
               </div>
             </div>
 
-            {/* Verification Separation Notice */}
-            <div className="p-2.5 rounded-lg bg-zinc-950/60 border border-zinc-800 text-[11px] font-mono text-zinc-400 space-y-1">
+            {/* Section 7 & 9: Range Request & JAR Handoff Details */}
+            <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-850 text-xs font-mono space-y-1.5">
               <div className="flex items-center justify-between">
-                <span>1. Bytecode Patch Engine Validation:</span>
-                <span className="text-emerald-400 font-bold">
-                  {candidateOutput?.status === 'VALIDATED' ? 'PASS (10/10 Checks)' : 'READY FOR BUILD'}
+                <span className="text-zinc-400">Range Request (bytes=0-1):</span>
+                <span className="font-bold">
+                  {diagnostics.rangeRequestSupported === true ? (
+                    <span className="text-emerald-400">YES (HTTP 206 Partial Content)</span>
+                  ) : diagnostics.rangeRequestSupported === false ? (
+                    <span className="text-red-400">NO (HTTP {diagnostics.rangeHttpStatus})</span>
+                  ) : (
+                    <span className="text-zinc-500">Untested</span>
+                  )}
                 </span>
               </div>
+
               <div className="flex items-center justify-between">
-                <span>2. Web Browser J2ME Compatibility:</span>
-                <span className="text-blue-400 font-bold">
-                  {runtimeStatus === 'RUNNING' ? 'ACTIVE CANVAS' : 'STANDBY'}
+                <span className="text-zinc-400">Original JAR byteLength:</span>
+                <span className="text-zinc-200">{diagnostics.jarByteLength ? `${diagnostics.jarByteLength} bytes` : `${session.originalFile.size} bytes`}</span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Blob Created / In RAM:</span>
+                <span className={diagnostics.blobCreated ? 'text-emerald-400' : 'text-zinc-500'}>
+                  {diagnostics.blobCreated ? 'YES (application/java-archive)' : 'NO'}
                 </span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">JAR Handed to Emulator:</span>
+                <span className={diagnostics.jarHandedToEmulator ? 'text-emerald-400' : 'text-zinc-500'}>
+                  {diagnostics.jarHandedToEmulator ? 'YES (via ArrayBuffer transfer)' : 'NO'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Target MIDlet Main-Class:</span>
+                <span className="text-sky-300 font-bold">{midlet?.mainClass || 'main.GameMidlet'}</span>
+              </div>
+            </div>
+
+            {/* Section 6: Assets Diagnostics Table */}
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-mono text-zinc-400 font-semibold flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-zinc-500" />
+                <span>Emulator Runtime Assets Status:</span>
+              </div>
+              <div className="bg-zinc-950 rounded-lg border border-zinc-850 divide-y divide-zinc-850/60 overflow-hidden">
+                {diagnostics.assets.map((asset) => (
+                  <div key={asset.name} className="px-3 py-1.5 flex items-center justify-between text-[11px] font-mono">
+                    <div className="truncate max-w-[280px]">
+                      <span className="text-zinc-200 font-medium">{asset.name}</span>
+                      <span className="text-zinc-500 text-[10px] ml-1.5">({asset.url})</span>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      {asset.contentLength && (
+                        <span className="text-zinc-400 text-[10px]">
+                          {(asset.contentLength / 1024).toFixed(1)} KB
+                        </span>
+                      )}
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                          asset.status === 'LOADED'
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
+                            : asset.status === 'FAILED'
+                            ? 'bg-red-950 text-red-400 border border-red-800/60'
+                            : 'bg-zinc-800 text-zinc-400'
+                        }`}
+                      >
+                        {asset.status === 'LOADED' ? `HTTP ${asset.httpStatus}` : asset.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* Runtime Console Output */}
+          {/* Section 12: Real Runtime Console Output */}
           <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col h-[340px]">
             {/* Console Header */}
             <div className="px-3.5 py-2.5 bg-zinc-950/80 border-b border-zinc-800 flex items-center justify-between">
@@ -872,7 +1016,7 @@ export function TestGameTab({
             <div className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-1.5 bg-zinc-950/90 scrollbar-thin">
               {logs.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-zinc-600 text-xs italic">
-                  Chưa có thông báo runtime. Nhấn [ Start ] để khởi chạy J2ME loop.
+                  Chưa có thông báo runtime. Nhấn [ Run Emulator Self-Test ] hoặc [ Run Original JAR ].
                 </div>
               ) : (
                 logs.map((log) => {
