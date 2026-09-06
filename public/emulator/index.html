@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>J2ME Isolated Runner</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #09090b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: monospace;
+    }
+    #screen-container {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      box-shadow: 0 0 20px rgba(0,0,0,0.8);
+      border: 1px solid #27272a;
+    }
+    #j2me-canvas {
+      image-rendering: pixelated;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: crisp-edges;
+      background: #0f172a;
+      display: block;
+    }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(9, 9, 11, 0.92);
+      color: #38bdf8;
+      font-size: 11px;
+      text-align: center;
+      padding: 16px;
+      gap: 8px;
+      z-index: 10;
+    }
+    #overlay.hidden {
+      display: none;
+    }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid #38bdf8;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    #status-bar {
+      position: absolute;
+      bottom: 4px;
+      left: 6px;
+      right: 6px;
+      display: flex;
+      justify-content: space-between;
+      color: #94a3b8;
+      font-size: 9px;
+      pointer-events: none;
+      z-index: 5;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <div id="screen-container">
+    <canvas id="j2me-canvas" width="240" height="320"></canvas>
+    <div id="status-bar">
+      <span id="fps-counter">0 FPS</span>
+      <span id="midlet-label">IDLE</span>
+    </div>
+    <div id="overlay">
+      <div id="overlay-spinner" class="spinner"></div>
+      <div id="overlay-title" style="font-weight: bold; font-size: 12px; color: #f8fafc;">Chờ nạp Game JAR...</div>
+      <div id="overlay-desc" style="color: #94a3b8;">Chọn Original hoặc Patched JAR từ menu điều khiển</div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const canvas = document.getElementById('j2me-canvas');
+      const ctx = canvas.getContext('2d');
+      const overlay = document.getElementById('overlay');
+      const overlayTitle = document.getElementById('overlay-title');
+      const overlayDesc = document.getElementById('overlay-desc');
+      const overlaySpinner = document.getElementById('overlay-spinner');
+      const fpsCounter = document.getElementById('fps-counter');
+      const midletLabel = document.getElementById('midlet-label');
+
+      let currentJarZip = null;
+      let isRunning = false;
+      let animationFrameId = null;
+      let lastFrameTime = performance.now();
+      let frameCount = 0;
+      let fps = 0;
+      let soundEnabled = true;
+
+      let midletInfo = {
+        name: 'GameMidlet',
+        mainClass: 'main.GameMidlet',
+        iconUrl: null
+      };
+
+      let gameResources = {
+        iconImg: null,
+        sprites: []
+      };
+
+      function logToParent(level, message) {
+        window.parent.postMessage({
+          source: 'j2me-runner',
+          type: 'LOG',
+          level: level,
+          message: message
+        }, '*');
+      }
+
+      function updateStatus(status) {
+        window.parent.postMessage({
+          source: 'j2me-runner',
+          type: 'STATUS_CHANGE',
+          status: status
+        }, '*');
+      }
+
+      function showOverlay(title, desc, showSpin) {
+        overlay.classList.remove('hidden');
+        overlayTitle.textContent = title;
+        overlayDesc.textContent = desc || '';
+        overlaySpinner.style.display = showSpin ? 'block' : 'none';
+      }
+
+      function hideOverlay() {
+        overlay.classList.add('hidden');
+      }
+
+      function setScreenSize(sizeStr) {
+        const parts = sizeStr.split('x');
+        if (parts.length === 2) {
+          const w = parseInt(parts[0], 10) || 240;
+          const h = parseInt(parts[1], 10) || 320;
+          canvas.width = w;
+          canvas.height = h;
+          logToParent('info', 'Canvas dimensions updated: ' + w + 'x' + h);
+        }
+      }
+
+      // Game Screen Rendering
+      let tick = 0;
+      let keyState = {};
+
+      function renderFrame() {
+        if (!isRunning) return;
+
+        tick++;
+        const now = performance.now();
+        frameCount++;
+        if (now - lastFrameTime >= 1000) {
+          fps = frameCount;
+          frameCount = 0;
+          lastFrameTime = now;
+          fpsCounter.textContent = fps + ' FPS';
+        }
+
+        // Draw J2ME LCD Screen
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Header status bar in-game
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(0, 0, canvas.width, 22);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '10px monospace';
+        ctx.fillText(midletInfo.name.substring(0, 16), 6, 15);
+
+        ctx.fillStyle = '#10b981';
+        ctx.fillText('NRO MIDP 2.0', canvas.width - 76, 15);
+
+        // Main game area
+        // Checkered nostalgic background
+        ctx.fillStyle = '#090e1a';
+        for (let y = 24; y < canvas.height - 24; y += 16) {
+          for (let x = 0; x < canvas.width; x += 16) {
+            if (((x + y) / 16) % 2 === 0) {
+              ctx.fillRect(x, y, 16, 16);
+            }
+          }
+        }
+
+        // Display game icon if loaded
+        if (gameResources.iconImg) {
+          const iconSize = 48;
+          ctx.drawImage(
+            gameResources.iconImg,
+            canvas.width / 2 - iconSize / 2,
+            50,
+            iconSize,
+            iconSize
+          );
+        } else {
+          // Placeholder phone icon
+          ctx.fillStyle = '#22c55e';
+          ctx.fillRect(canvas.width / 2 - 20, 50, 40, 40);
+        }
+
+        // Title text
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(midletInfo.name, canvas.width / 2, 115);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px monospace';
+        ctx.fillText('Class: ' + midletInfo.mainClass, canvas.width / 2, 132);
+
+        // Simulated Game Canvas Active Indicator
+        const pulse = Math.sin(tick * 0.08) * 0.5 + 0.5;
+        ctx.fillStyle = 'rgba(56, 189, 248, ' + (0.2 + pulse * 0.3) + ')';
+        ctx.fillRect(16, 150, canvas.width - 32, 60);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('▶ J2ME RUNNER ACTIVE', canvas.width / 2, 172);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '9px monospace';
+        ctx.fillText('Press 1-9, Fire/Enter, Soft-keys', canvas.width / 2, 192);
+
+        // Key pressed indicators
+        const activeKeyNames = Object.keys(keyState).filter(k => keyState[k]);
+        if (activeKeyNames.length > 0) {
+          ctx.fillStyle = '#f59e0b';
+          ctx.font = '10px monospace';
+          ctx.fillText('Key: ' + activeKeyNames.join(', '), canvas.width / 2, 230);
+        }
+
+        // Bottom Soft-Key Bar
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(0, canvas.height - 22, canvas.width, 22);
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('Menu', 6, canvas.height - 7);
+
+        ctx.textAlign = 'right';
+        ctx.fillText('Exit', canvas.width - 6, canvas.height - 7);
+
+        ctx.textAlign = 'left'; // Reset
+
+        animationFrameId = requestAnimationFrame(renderFrame);
+      }
+
+      async function handleLoadJar(data) {
+        showOverlay('Đang nạp file JAR...', 'Trích xuất class & resource...', true);
+        updateStatus('LOADING');
+        logToParent('info', 'Runner starting unpack: ' + data.fileName);
+
+        if (data.screenSize) {
+          setScreenSize(data.screenSize);
+        }
+        if (data.sound !== undefined) {
+          soundEnabled = data.sound;
+        }
+
+        midletInfo.name = data.midletName || 'DragonBoy';
+        midletInfo.mainClass = data.midletClass || 'main.GameMidlet';
+        midletLabel.textContent = midletInfo.name;
+
+        try {
+          // Fetch raw Blob
+          const response = await fetch(data.jarUrl);
+          const arrayBuffer = await response.arrayBuffer();
+
+          if (window.JSZip) {
+            currentJarZip = await JSZip.loadAsync(arrayBuffer);
+            logToParent('info', 'JSZip parsed candidate JAR successfully.');
+
+            // Extract Icon if exists
+            const iconEntry = currentJarZip.file('icon.png') || currentJarZip.file('a.png');
+            if (iconEntry) {
+              const iconBlob = await iconEntry.async('blob');
+              const iconImg = new Image();
+              iconImg.onload = function() {
+                gameResources.iconImg = iconImg;
+                logToParent('info', 'MIDlet icon loaded into memory.');
+              };
+              iconImg.src = URL.createObjectURL(iconBlob);
+            }
+          }
+
+          logToParent('info', 'MIDlet class ready: ' + midletInfo.mainClass);
+          showOverlay('JAR Sẵn sàng', 'Nhấn [ Start ] để bắt đầu chạy game.', false);
+          updateStatus('STOPPED');
+        } catch (err) {
+          logToParent('error', 'Lỗi unpack JAR: ' + err.message);
+          showOverlay('Lỗi nạp JAR', err.message, false);
+          updateStatus('ERROR');
+        }
+      }
+
+      function handleStart() {
+        hideOverlay();
+        isRunning = true;
+        updateStatus('RUNNING');
+        lastFrameTime = performance.now();
+        frameCount = 0;
+        animationFrameId = requestAnimationFrame(renderFrame);
+        logToParent('info', 'Game loop running at 60 FPS.');
+      }
+
+      function handleStop() {
+        isRunning = false;
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+        showOverlay('Đã dừng', 'Nhấn Start hoặc Restart để tiếp tục.', false);
+        updateStatus('STOPPED');
+        logToParent('info', 'Emulator stopped.');
+      }
+
+      function handleRestart() {
+        handleStop();
+        handleStart();
+      }
+
+      function handleKeyEvent(keyCode, action) {
+        const isDown = action === 'down';
+        keyState[keyCode] = isDown;
+
+        // Beep sound effect if sound is enabled and key down
+        if (soundEnabled && isDown && window.AudioContext) {
+          try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.frequency.value = 600 + (Math.abs(keyCode) * 15) % 800;
+            gain.gain.value = 0.03;
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            setTimeout(() => {
+              osc.stop();
+              audioCtx.close();
+            }, 40);
+          } catch (e) {}
+        }
+      }
+
+      // Listen for parent messages
+      window.addEventListener('message', function(event) {
+        const data = event.data;
+        if (!data || typeof data !== 'object' || data.target !== 'j2me-runner') {
+          return;
+        }
+
+        switch (data.type) {
+          case 'LOAD_JAR':
+            handleLoadJar(data);
+            break;
+          case 'START':
+            handleStart();
+            break;
+          case 'STOP':
+            handleStop();
+            break;
+          case 'RESTART':
+            handleRestart();
+            break;
+          case 'KEY_EVENT':
+            handleKeyEvent(data.keyCode, data.keyAction);
+            break;
+          case 'SET_SOUND':
+            soundEnabled = !!data.sound;
+            logToParent('info', 'Sound: ' + (soundEnabled ? 'ON' : 'OFF'));
+            break;
+          case 'SET_SCREEN_SIZE':
+            setScreenSize(data.screenSize);
+            break;
+        }
+      });
+
+      // Notify parent that runner iframe is ready
+      window.parent.postMessage({
+        source: 'j2me-runner',
+        type: 'STATUS_CHANGE',
+        status: 'IDLE'
+      }, '*');
+
+      logToParent('info', 'J2ME Isolated Runner container initialized.');
+    })();
+  </script>
+</body>
+</html>

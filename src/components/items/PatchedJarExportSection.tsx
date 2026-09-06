@@ -11,6 +11,7 @@ import {
   FileCode,
   Layers,
   ArrowRight,
+  Play,
 } from 'lucide-react';
 import { ClassPatchGroup, ClassRewriteResult } from '../../types/patch';
 import { ExportValidationResult, ExportProgress } from '../../services/jarExportService';
@@ -24,6 +25,8 @@ interface PatchedJarExportSectionProps {
   exportError: string | null;
   onBuildPatchedJar: () => void;
   onDownloadPatchedJar: () => void;
+  onTestPatchedJar?: () => void;
+  onTestOriginalJar?: () => void;
 }
 
 export function PatchedJarExportSection({
@@ -35,6 +38,8 @@ export function PatchedJarExportSection({
   exportError,
   onBuildPatchedJar,
   onDownloadPatchedJar,
+  onTestPatchedJar,
+  onTestOriginalJar,
 }: PatchedJarExportSectionProps) {
   // Check if all current groups have validated rewrite previews
   const unvalidatedGroups = classGroups.filter(
@@ -87,14 +92,40 @@ export function PatchedJarExportSection({
             )}
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={onDownloadPatchedJar}
-            className="px-4 py-2 rounded-lg font-bold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 flex items-center gap-2 shadow-lg shadow-emerald-900/60 cursor-pointer transition-colors shrink-0"
-          >
-            <Download className="w-4 h-4 text-zinc-950 stroke-[2.5]" />
-            <span>Download Patched JAR</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onTestPatchedJar && (
+              <button
+                type="button"
+                id="test-patched-jar-quick-button"
+                onClick={onTestPatchedJar}
+                className="px-3.5 py-2 rounded-lg font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 flex items-center gap-1.5 shadow-md shadow-amber-950/50 cursor-pointer transition-colors shrink-0"
+                title="Mở tab Test Game và chạy trực tiếp Patched JAR từ RAM"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>▶ Test Patched JAR</span>
+              </button>
+            )}
+            {onTestOriginalJar && (
+              <button
+                type="button"
+                id="test-original-jar-quick-button"
+                onClick={onTestOriginalJar}
+                className="px-3 py-2 rounded-lg font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 text-xs"
+                title="Mở tab Test Game và chạy Original JAR"
+              >
+                <span>Run Original</span>
+              </button>
+            )}
+            <button
+              type="button"
+              id="download-patched-jar-button"
+              onClick={onDownloadPatchedJar}
+              className="px-3.5 py-2 rounded-lg font-bold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 flex items-center gap-1.5 shadow-md shadow-emerald-900/50 cursor-pointer transition-colors shrink-0 text-xs"
+            >
+              <Download className="w-3.5 h-3.5 text-zinc-950 stroke-[2.5]" />
+              <span>Download Patched JAR</span>
+            </button>
+          </div>
         )}
       </div>
 

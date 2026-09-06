@@ -7,6 +7,7 @@ import {
   Compass,
   Package,
   AlertTriangle,
+  Gamepad2,
 } from 'lucide-react';
 import { LoadedJarSession } from './types/jar';
 import { loadAndAnalyzeJarSession } from './services/jarService';
@@ -15,11 +16,13 @@ import { JarInfoPanel } from './components/JarInfoPanel';
 import { ManifestPanel } from './components/ManifestPanel';
 import { JarExplorer } from './components/explorer/JarExplorer';
 import { ItemsBrowser } from './components/items/ItemsBrowser';
+import { TestGameTab } from './components/emulator/TestGameTab';
 import { getDirtyCount, discardAllDrafts } from './services/itemDraftService';
 
 export default function App() {
   const [session, setSession] = useState<LoadedJarSession | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'explorer' | 'items'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'explorer' | 'items' | 'test'>('overview');
+  const [testGameSource, setTestGameSource] = useState<'ORIGINAL' | 'PATCHED'>('ORIGINAL');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dirtyItemCount, setDirtyItemCount] = useState(0);
@@ -184,6 +187,26 @@ export default function App() {
                     )
                   )}
                 </button>
+
+                {/* Step 12: Integrated J2ME Web Test Runner Tab */}
+                <button
+                  id="tab-test-game"
+                  type="button"
+                  onClick={() => setActiveTab('test')}
+                  className={`px-3.5 py-1.5 rounded-md text-xs font-mono flex items-center gap-2 transition-colors cursor-pointer ${
+                    activeTab === 'test'
+                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                  }`}
+                >
+                  <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Test Game</span>
+                  {session.candidateOutput?.status === 'VALIDATED' && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                      Patched
+                    </span>
+                  )}
+                </button>
               </div>
 
               <div className="flex items-center gap-3 text-xs font-mono text-zinc-400">
@@ -209,10 +232,20 @@ export default function App() {
               </div>
             ) : activeTab === 'explorer' ? (
               <JarExplorer session={session} />
-            ) : (
+            ) : activeTab === 'items' ? (
               <ItemsBrowser
                 session={session}
                 onDraftsUpdated={(count) => setDirtyItemCount(count)}
+                onNavigateToTestGame={(src) => {
+                  setTestGameSource(src);
+                  setActiveTab('test');
+                }}
+              />
+            ) : (
+              <TestGameTab
+                session={session}
+                initialSource={testGameSource}
+                onNavigateToPatchBuilder={() => setActiveTab('items')}
               />
             )}
           </div>

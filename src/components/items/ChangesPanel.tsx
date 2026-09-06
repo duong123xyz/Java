@@ -48,6 +48,7 @@ interface ChangesPanelProps {
   onSelectItem: (itemKey: string) => void;
   onResetItem: (itemKey: string) => void;
   onDiscardAll: () => void;
+  onNavigateToTestGame?: (source: 'ORIGINAL' | 'PATCHED') => void;
 }
 
 export function ChangesPanel({
@@ -59,6 +60,7 @@ export function ChangesPanel({
   onSelectItem,
   onResetItem,
   onDiscardAll,
+  onNavigateToTestGame,
 }: ChangesPanelProps) {
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [activeView, setActiveView] = useState<'items' | 'groups'>('items');
@@ -223,7 +225,16 @@ export function ChangesPanel({
       );
 
       setExportResult(result);
-      if (result.status === 'FAILED') {
+      if (result.status === 'VALIDATED' && result.candidateBlob && session) {
+        session.candidateOutput = {
+          blob: result.candidateBlob,
+          fileName: result.candidateFileName,
+          status: 'VALIDATED',
+          validatedAt: Date.now(),
+          expectedModifiedCount: classGroups.reduce((acc, g) => acc + g.modifiedCellCount, 0),
+          metrics: result.metrics,
+        };
+      } else if (result.status === 'FAILED') {
         setExportError(
           result.failureReason || `Export verification thất bại tại giai đoạn ${result.failurePhase}`
         );
@@ -387,6 +398,14 @@ export function ChangesPanel({
                 exportError={exportError}
                 onBuildPatchedJar={handleBuildPatchedJar}
                 onDownloadPatchedJar={handleDownloadPatchedJar}
+                onTestPatchedJar={() => {
+                  onClose();
+                  onNavigateToTestGame?.('PATCHED');
+                }}
+                onTestOriginalJar={() => {
+                  onClose();
+                  onNavigateToTestGame?.('ORIGINAL');
+                }}
               />
 
               {classGroups.map((group) => (

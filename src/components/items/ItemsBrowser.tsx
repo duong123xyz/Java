@@ -37,11 +37,12 @@ import { ChangesPanel } from './ChangesPanel';
 interface ItemsBrowserProps {
   session: LoadedJarSession;
   onDraftsUpdated?: (dirtyCount: number) => void;
+  onNavigateToTestGame?: (source: 'ORIGINAL' | 'PATCHED') => void;
 }
 
 const PAGE_SIZE = 50;
 
-export function ItemsBrowser({ session, onDraftsUpdated }: ItemsBrowserProps) {
+export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }: ItemsBrowserProps) {
   // Ensure itemDrafts map exists on session
   if (!session.itemDrafts) {
     session.itemDrafts = new Map<string, ItemDraft>();
@@ -583,6 +584,7 @@ export function ItemsBrowser({ session, onDraftsUpdated }: ItemsBrowserProps) {
         onSelectItem={(key) => setSelectedItemKey(key)}
         onResetItem={(key) => handleResetItemByKey(key)}
         onDiscardAll={handleDiscardAll}
+        onNavigateToTestGame={onNavigateToTestGame}
       />
     </div>
   );

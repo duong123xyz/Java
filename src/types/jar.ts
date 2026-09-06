@@ -76,6 +76,15 @@ export interface ClassFileInfo {
   errorMessage?: string;
 }
 
+export interface CandidateOutputJar {
+  blob: Blob;
+  fileName: string;
+  status: 'VALIDATED' | 'STALE' | 'FAILED';
+  validatedAt: number;
+  expectedModifiedCount: number;
+  metrics?: any;
+}
+
 export interface LoadedJarSession {
   originalFile: File;
   zip: JSZip;
@@ -85,6 +94,7 @@ export interface LoadedJarSession {
   itemAnalysis?: ItemAnalysisSessionData;
   itemDrafts?: Map<string, ItemDraft>;
   rewritePreviews?: Map<string, ClassRewriteResult>;
+  candidateOutput?: CandidateOutputJar;
 }
 
 export interface JarLoadState {
