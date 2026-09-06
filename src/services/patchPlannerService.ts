@@ -40,33 +40,56 @@ export function resolveColumnIndex(schemaColumns: string[], fieldIdentifier: str
 }
 
 /**
+ * Normalizes any class identifier or entry path to canonical JAR entry format (e.g. "a/a/a/i.class").
+ * Exact case-sensitive. Never converts to lowercase. Does not append ".class" if already present.
+ */
+export function normalizeClassEntryPath(identifier: string): string {
+  if (!identifier) return '';
+  const trimmed = identifier.trim();
+  return trimmed.endsWith('.class') ? trimmed : `${trimmed}.class`;
+}
+
+/**
  * Helper to retrieve or parse a ClassFileInfo case-sensitively.
+ * Reuses same pipeline as Step 07 without creating a redundant retrieval logic.
+ * Checks memory cache first; loads directly from JSZip on cache miss.
  */
 export async function getSessionClassInfo(
   session: LoadedJarSession,
-  classInternalName: string
+  classIdentifier: string
 ): Promise<ClassFileInfo | null> {
-  const exactPath = `${classInternalName}.class`;
+  const exactPath = normalizeClassEntryPath(classIdentifier);
 
   if (session.classParseCache?.has(exactPath)) {
     return session.classParseCache.get(exactPath)!;
   }
 
-  const entry = session.entries.find((e) => e.path === exactPath);
-  if (!entry) {
+  // Look up in session.zip directly or fallback to session.entries
+  const zipEntry = session.zip?.file(exactPath) || session.entries.find((e) => e.path === exactPath)?.zipEntry;
+  if (!zipEntry) {
+    console.error(`[getSessionClassInfo] Entry not found in JAR: '${exactPath}'. Session total entries: ${session.entries.length}`);
     return null;
   }
 
+  let buffer: ArrayBuffer | null = null;
   try {
-    const buffer = await entry.zipEntry.async('arraybuffer');
+    buffer = await zipEntry.async('arraybuffer');
     const classInfo = parseClassFile(buffer);
     if (!session.classParseCache) {
       session.classParseCache = new Map();
     }
     session.classParseCache.set(exactPath, classInfo);
     return classInfo;
-  } catch {
-    return null;
+  } catch (err: any) {
+    console.error('[getSessionClassInfo] Class parse failed:', {
+      path: exactPath,
+      entryFound: true,
+      byteLength: buffer ? buffer.byteLength : 0,
+      exceptionName: err?.name,
+      exceptionMessage: err?.message,
+      stack: err?.stack,
+    });
+    throw new Error(`Class parse failed for '${exactPath}': ${err?.message || err}`);
   }
 }
 

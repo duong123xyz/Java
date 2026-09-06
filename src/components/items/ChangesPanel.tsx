@@ -20,6 +20,9 @@ import {
   Boxes,
   Binary,
   Check,
+  Download,
+  PackageCheck,
+  RefreshCw,
 } from 'lucide-react';
 import { ItemDraft, ItemRecord } from '../../types/item';
 import { LoadedJarSession } from '../../types/jar';
@@ -27,6 +30,14 @@ import { ITEM_SCHEMA_FIELDS, getItemDraftKey } from '../../services/itemDraftSer
 import { ItemFieldPatchPlan, ClassPatchGroup, ClassRewriteResult } from '../../types/patch';
 import { buildFieldPatchPlan, buildClassPatchGroups, getSessionClassInfo } from '../../services/patchPlannerService';
 import { rewriteClass } from '../../services/classFileRewriter';
+import { runClassPreflight, PreflightCheckResult } from '../../services/classPreflightService';
+import {
+  buildAndVerifyPatchedJar,
+  downloadPatchedJarBlob,
+  ExportValidationResult,
+  ExportProgress,
+} from '../../services/jarExportService';
+import { PatchedJarExportSection } from './PatchedJarExportSection';
 
 interface ChangesPanelProps {
   session?: LoadedJarSession;
@@ -54,13 +65,24 @@ export function ChangesPanel({
   const [plansMap, setPlansMap] = useState<Map<string, ItemFieldPatchPlan>>(new Map());
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [rewriteResults, setRewriteResults] = useState<Map<string, ClassRewriteResult>>(new Map());
+  const [preflightResults, setPreflightResults] = useState<Map<string, PreflightCheckResult>>(new Map());
   const [rewritingGroup, setRewritingGroup] = useState<string | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
 
-  // Invalidate rewrite previews if drafts change
+  // Step 11: Build & Export Patched JAR states
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const [exportResult, setExportResult] = useState<ExportValidationResult | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  // Invalidate rewrite previews and candidate output if drafts change
   useEffect(() => {
     setRewriteResults(new Map());
+    setPreflightResults(new Map());
     setRewriteError(null);
+    setExportResult(null);
+    setExportError(null);
+    setExportProgress(null);
   }, [dirtyDrafts]);
 
   // Map item records by draft key for quick lookup
@@ -141,19 +163,35 @@ export function ChangesPanel({
     setRewriteError(null);
 
     try {
-      const exactPath = group.classEntryPath || `${group.sourceClass}.class`;
-      const entry = session.entries.find((e) => e.path === exactPath);
-      if (!entry) {
-        throw new Error(`Entry not found in session: ${exactPath}`);
+      // Step 1: Run comprehensive preflight check on original class
+      console.log(`[handleBuildRewritePreview] Running preflight on ${group.sourceClass}...`);
+      const preflight = await runClassPreflight(session, group);
+
+      setPreflightResults((prev) => {
+        const next = new Map(prev);
+        next.set(group.sourceClass, preflight);
+        return next;
+      });
+
+      if (preflight.status !== 'PASS') {
+        console.error(`[handleBuildRewritePreview] Preflight check FAILED for ${group.sourceClass}:`, preflight.reason);
+        // Clear any previous rewrite result for this group
+        setRewriteResults((prev) => {
+          const next = new Map(prev);
+          next.delete(group.sourceClass);
+          return next;
+        });
+        return;
       }
 
-      const originalBytes = await entry.zipEntry.async('arraybuffer');
-      const classInfo = await getSessionClassInfo(session, group.sourceClass);
-      if (!classInfo) {
-        throw new Error(`Could not parse class info for: ${group.sourceClass}`);
-      }
-
-      const result = await rewriteClass(originalBytes, classInfo, group, session);
+      // Step 2: Preflight PASS - Proceed with In-Memory Class Rewriter
+      console.log(`[handleBuildRewritePreview] Preflight PASSED for ${group.sourceClass}. Executing in-memory rewrite...`);
+      const result = await rewriteClass(
+        preflight.originalBytes!,
+        preflight.classInfo!,
+        group,
+        session
+      );
 
       setRewriteResults((prev) => {
         const next = new Map(prev);
@@ -161,11 +199,48 @@ export function ChangesPanel({
         return next;
       });
     } catch (err: any) {
-      console.error('Error rebuilding class preview:', err);
-      setRewriteError(err.message || String(err));
+      console.error('[handleBuildRewritePreview] Rewrite error:', err);
+      setRewriteError(`PRE-FLIGHT: PASS\nREWRITE: FAIL\nReason: ${err.message || String(err)}`);
     } finally {
       setRewritingGroup(null);
     }
+  };
+
+  const handleBuildPatchedJar = async () => {
+    if (!session || isExporting) return;
+    setIsExporting(true);
+    setExportError(null);
+    setExportProgress(null);
+
+    try {
+      const result = await buildAndVerifyPatchedJar(
+        session,
+        classGroups,
+        rewriteResults,
+        (progress) => {
+          setExportProgress(progress);
+        }
+      );
+
+      setExportResult(result);
+      if (result.status === 'FAILED') {
+        setExportError(
+          result.failureReason || `Export verification thất bại tại giai đoạn ${result.failurePhase}`
+        );
+      }
+    } catch (err: any) {
+      console.error('[handleBuildPatchedJar] Error building patched jar:', err);
+      setExportError(err.message || String(err));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDownloadPatchedJar = () => {
+    if (!exportResult || exportResult.status !== 'VALIDATED' || !exportResult.candidateBlob) {
+      return;
+    }
+    downloadPatchedJarBlob(exportResult.candidateBlob, exportResult.candidateFileName);
   };
 
   if (!isOpen) return null;
@@ -302,6 +377,18 @@ export function ChangesPanel({
                 </p>
               </div>
 
+              {/* Step 11: Export Patched JAR Control & Full Validation Panel */}
+              <PatchedJarExportSection
+                classGroups={classGroups}
+                rewriteResults={rewriteResults}
+                isExporting={isExporting}
+                exportProgress={exportProgress}
+                exportResult={exportResult}
+                exportError={exportError}
+                onBuildPatchedJar={handleBuildPatchedJar}
+                onDownloadPatchedJar={handleDownloadPatchedJar}
+              />
+
               {classGroups.map((group) => (
                 <div
                   key={group.sourceClass}
@@ -417,6 +504,72 @@ export function ChangesPanel({
                       ))}
                     </div>
                   </div>
+
+                  {/* PRE-FLIGHT DIAGNOSTICS: FAILED */}
+                  {preflightResults.get(group.sourceClass)?.status === 'FAIL' && (() => {
+                    const pf = preflightResults.get(group.sourceClass)!;
+                    return (
+                      <div className="p-3.5 bg-red-950/40 border border-red-800/80 rounded-xl space-y-2.5 font-mono text-xs text-red-200">
+                        <div className="flex items-center gap-2 text-red-300 font-bold border-b border-red-900/60 pb-2">
+                          <ShieldAlert className="w-4 h-4 text-red-400 shrink-0" />
+                          <span>PRE-FLIGHT FAILED</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-red-900/60 text-red-200 border border-red-700 ml-auto font-bold">
+                            STEP: {pf.errorStep || 'BLOCKED'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] bg-red-950/60 p-2.5 rounded-lg border border-red-900/40">
+                          <div><span className="text-zinc-400">Exact Path:</span> <strong className="text-zinc-100">{pf.exactPath}</strong></div>
+                          <div><span className="text-zinc-400">Entry Found:</span> <strong className={pf.entryFound ? 'text-emerald-400' : 'text-red-400'}>{pf.entryFound ? 'YES' : 'NO'}</strong></div>
+                          <div><span className="text-zinc-400">Byte Length:</span> <strong className="text-zinc-100">{pf.byteLength} bytes</strong></div>
+                          <div><span className="text-zinc-400">Magic (CAFEBABE):</span> <strong className={pf.magicPass ? 'text-emerald-400' : 'text-red-400'}>{pf.magicHex} ({pf.magicPass ? 'PASS' : 'FAIL'})</strong></div>
+                          <div><span className="text-zinc-400">Class Parser:</span> <strong className={pf.classParsePass ? 'text-emerald-400' : 'text-red-400'}>{pf.classParsePass ? 'PASS' : 'FAIL'}</strong></div>
+                          <div><span className="text-zinc-400">&lt;clinit&gt; Method:</span> <strong className={pf.clinitFound ? 'text-emerald-400' : 'text-red-400'}>{pf.clinitFound ? 'FOUND' : 'MISSING'}</strong></div>
+                          <div><span className="text-zinc-400">Target Field ({pf.targetFieldName}):</span> <strong className={pf.targetFieldFound ? 'text-emerald-400' : 'text-red-400'}>{pf.targetFieldFound ? 'FOUND' : 'MISSING'}</strong></div>
+                          <div><span className="text-zinc-400">Table Reconstruction:</span> <strong className={pf.tableReconstructionPass ? 'text-emerald-400' : 'text-red-400'}>{pf.tableReconstructionPass ? 'PASS' : 'FAIL'}</strong></div>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-black/50 border border-red-900/60 text-xs text-red-200">
+                          <span className="text-red-400 font-bold block mb-1">Failure Reason:</span>
+                          <p className="whitespace-pre-wrap font-mono text-[11px] text-red-300">{pf.reason}</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* PRE-FLIGHT SUMMARY: PASSED */}
+                  {preflightResults.get(group.sourceClass)?.status === 'PASS' && (() => {
+                    const pf = preflightResults.get(group.sourceClass)!;
+                    return (
+                      <div className="p-2.5 bg-emerald-950/25 border border-emerald-800/50 rounded-lg text-xs font-mono text-emerald-300 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span className="font-bold">Original class preflight: PASS</span>
+                          <span className="text-[10px] text-zinc-400">({pf.exactPath})</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] text-zinc-400 flex-wrap">
+                          <span>Entry: <strong className="text-emerald-400">YES</strong></span>
+                          <span>Bytes: <strong className="text-zinc-200">{pf.byteLength}B</strong></span>
+                          <span>CAFEBABE: <strong className="text-emerald-400">PASS</strong></span>
+                          <span>Parser: <strong className="text-emerald-400">PASS</strong></span>
+                          <span>Internal: <strong className="text-zinc-200">{pf.internalClass}</strong></span>
+                          <span>Table ({pf.targetFieldName}): <strong className="text-emerald-400">{pf.reconstructedRowCount} rows</strong></span>
+                          <span>Evidence: <strong className="text-emerald-400">PASS</strong></span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* REWRITE ERROR (IF PREFLIGHT PASSED BUT REWRITE FAILED) */}
+                  {rewriteError && (
+                    <div className="p-3 bg-red-950/50 border border-red-800 rounded-lg text-xs font-mono text-red-200 space-y-1">
+                      <div className="flex items-center gap-2 text-red-400 font-bold">
+                        <ShieldAlert className="w-4 h-4" />
+                        <span>REWRITE EXECUTION ERROR</span>
+                      </div>
+                      <pre className="whitespace-pre-wrap text-[11px] text-red-300">{rewriteError}</pre>
+                    </div>
+                  )}
 
                   {/* IN-MEMORY REWRITE PREVIEW SECTION */}
                   {rewriteResults.get(group.sourceClass) && (() => {
