@@ -20,6 +20,7 @@ import {
   J2ME_KEYS,
 } from '../../types/emulator';
 import { DefaultJ2meTestSession, parseMidlet1 } from '../../services/j2meSessionService';
+import { isDraftTestCandidateFresh } from '../../services/draftTestService';
 
 interface TestGameTabProps {
   session: LoadedJarSession;
@@ -56,6 +57,10 @@ export function TestGameTab({
 
   const candidate = session.candidateOutput;
   const patchedAvailable = candidate?.status === 'VALIDATED';
+  const isDraftTestCandidate = candidate?.metrics?.source === 'DRAFT_TEST';
+  const patchedSourceLabel = isDraftTestCandidate ? 'Nháp đã dựng' : 'JAR đã vá';
+  const patchedRunLabel = isDraftTestCandidate ? 'nháp' : 'JAR đã vá';
+  const draftTestSummary = candidate?.metrics?.summary;
 
   useEffect(() => {
     setSource(initialSource);
@@ -101,11 +106,23 @@ export function TestGameTab({
           return;
         }
 
+        if (
+          current.metrics?.source === 'DRAFT_TEST' &&
+          !isDraftTestCandidateFresh(session)
+        ) {
+          current.status = 'STALE';
+          sess.addLog(
+            'error',
+            '[Source: DRAFT] Nháp đã thay đổi sau lần dựng JAR test. Bấm “Test nháp” lại để build bản mới; không chạy candidate cũ.'
+          );
+          return;
+        }
+
         const bytes = await current.blob.arrayBuffer();
         const sha = await shortHash(bytes);
         sess.addLog(
           'info',
-          `[Source: PATCHED] Đang nạp đúng bản JAR đã vá: ${current.fileName} (${bytes.byteLength} byte, sha256:${sha})`
+          `${isDraftTestCandidate ? '[Source: DRAFT]' : '[Source: PATCHED]'} Đang nạp ${isDraftTestCandidate ? 'JAR test nháp trong RAM' : 'đúng bản JAR đã vá'}: ${current.fileName} (${bytes.byteLength} byte, sha256:${sha})`
         );
         await sess.loadJar(bytes, current.fileName, session.jarInfo.manifest);
         return;
@@ -124,7 +141,7 @@ export function TestGameTab({
     } finally {
       setIsStarting(false);
     }
-  }, [isStarting, session, source]);
+  }, [isDraftTestCandidate, isStarting, session, source]);
 
   const switchSource = useCallback(async (next: EmulatorSourceType) => {
     if (next === 'PATCHED' && !patchedAvailable) return;
@@ -218,7 +235,7 @@ export function TestGameTab({
               <FileArchive className="inline w-3.5 h-3.5 mr-1" /> JAR gốc
             </button>
             <button type="button" disabled={!patchedAvailable} onClick={() => switchSource('PATCHED')} className={`px-3 py-1.5 rounded-lg border text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed ${source === 'PATCHED' ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`} title={patchedAvailable ? candidate?.fileName : 'Chưa có JAR đã vá ở trạng thái VALIDATED'}>
-              JAR đã vá {patchedAvailable ? '✓' : '(chưa có)'}
+              {patchedSourceLabel} {patchedAvailable ? '✓' : '(chưa có)'}
             </button>
           </div>
         </div>
@@ -226,20 +243,37 @@ export function TestGameTab({
         <div className={`p-3 rounded-lg border text-xs font-mono ${source === 'PATCHED' ? 'bg-amber-950/20 border-amber-700/40 text-amber-200' : 'bg-zinc-950 border-zinc-800 text-zinc-300'}`}>
           <div><strong>NGUỒN ĐANG CHẠY:</strong> {source}</div>
           <div className="truncate"><strong>JAR:</strong> {currentName}</div>
-          {source === 'PATCHED' && <div><strong>Trạng thái bản đã vá:</strong> {candidate?.status}</div>}
+          {source === 'PATCHED' && (
+            <>
+              <div><strong>Trạng thái:</strong> {candidate?.status}</div>
+              {isDraftTestCandidate && draftTestSummary && (
+                <div>
+                  <strong>Nháp đã áp dụng:</strong>{' '}
+                  {draftTestSummary.modifiedCells} cell / {draftTestSummary.rewrittenClasses} class
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {initialSource === 'PATCHED' && !patchedAvailable && (
           <div className="flex gap-2 p-3 rounded-lg border border-red-800 bg-red-950/30 text-red-300 text-xs font-mono">
             <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>Ứng dụng yêu cầu chạy JAR đã vá nhưng candidateOutput không còn VALIDATED. Hãy tạo lại JAR đã vá trước khi chạy thử.</span>
+            <span>
+              Bản test nháp/JAR đã vá không còn VALIDATED. Hãy bấm <strong>Test nháp</strong> hoặc build lại JAR trước khi chạy.
+            </span>
           </div>
         )}
+
+        <div className="p-2.5 rounded-lg border border-indigo-200 bg-indigo-50 text-[10px] text-indigo-700 leading-relaxed">
+          Trong AI Studio/Preview, CheerpJ không ổn định khi chạy trong iframe lồng nhau. Vì vậy runner riêng
+          <strong> chỉ được mở khi bạn chủ động bấm Chạy</strong>; vào tab Chạy thử hoặc bấm Test nháp sẽ không tự bật tab mới nữa.
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={loadActiveJar} disabled={isStarting || (source === 'PATCHED' && !patchedAvailable)} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-zinc-950 font-bold text-xs font-mono flex items-center gap-1.5">
             <Play className="w-4 h-4 fill-current" />
-            {isStarting ? 'Đang khởi động...' : `Chạy ${source === 'PATCHED' ? 'JAR đã vá' : 'JAR gốc'}`}
+            {isStarting ? 'Đang khởi động...' : `Chạy ${source === 'PATCHED' ? patchedRunLabel : 'JAR gốc'}`}
           </button>
           <button type="button" onClick={() => testSessionRef.current?.restart()} className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs font-mono text-zinc-200 flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Khởi động lại</button>
           <button type="button" onClick={() => testSessionRef.current?.stop()} className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-red-950/40 border border-zinc-700 text-xs font-mono text-zinc-200 flex items-center gap-1.5"><Square className="w-4 h-4" /> Dừng</button>
@@ -287,7 +321,7 @@ export function TestGameTab({
               <div className="text-zinc-600">Chưa có nhật ký. Chọn nguồn JAR rồi bấm Chạy.</div>
             ) : (
               logs.map((log) => (
-                <div key={log.id} className={log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-amber-400' : log.message.includes('[Source: PATCHED]') ? 'text-amber-300' : log.message.includes('[Source: ORIGINAL]') ? 'text-sky-300' : 'text-zinc-400'}>
+                <div key={log.id} className={log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-amber-400' : log.message.includes('[Source: DRAFT]') ? 'text-violet-300' : log.message.includes('[Source: PATCHED]') ? 'text-amber-300' : log.message.includes('[Source: ORIGINAL]') ? 'text-sky-300' : 'text-zinc-400'}>
                   <span className="text-zinc-600 mr-2">{log.timestamp}</span>{log.message}
                 </div>
               ))

@@ -1,47 +1,22 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>NRO Studio - FreeJ2ME Runner</title>
   <style>
-    * { box-sizing: border-box; }
-    html, body {
-      width: 100%; height: 100%; margin: 0; overflow: hidden;
-      background: #050506; color: #e4e4e7;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    }
-    body { display: flex; align-items: center; justify-content: center; }
-    #screen-area {
-      position: relative; width: 240px; height: 320px;
-      display: flex; align-items: center; justify-content: center;
-      background: #000; border: 1px solid #27272a; overflow: hidden;
-    }
-    #display {
-      display: none; outline: none; image-rendering: pixelated;
-      transform-origin: center center;
-    }
-    #overlay {
-      position: absolute; inset: 0; z-index: 10;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 9px; padding: 14px; text-align: center; background: rgba(5,5,6,.97);
-    }
-    #spinner {
-      width: 20px; height: 20px; border: 2px solid #27272a;
-      border-top-color: #38bdf8; border-radius: 50%; animation: spin .8s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    #stage {
-      padding: 3px 7px; border-radius: 4px; border: 1px solid #0369a1;
-      color: #38bdf8; background: #082f49; font-size: 9px; font-weight: 800;
-    }
-    #message { max-width: 220px; color: #a1a1aa; font-size: 10px; line-height: 1.4; }
-    #error {
-      display: none; width: 100%; max-height: 130px; overflow: auto;
-      white-space: pre-wrap; word-break: break-word; text-align: left;
-      padding: 7px; border-radius: 5px; border: 1px solid #7f1d1d;
-      background: #18181b; color: #fca5a5; font-size: 9px;
-    }
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#050506;color:#e4e4e7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    body{display:flex;align-items:center;justify-content:center}
+    #screen-area{position:relative;width:240px;height:320px;display:flex;align-items:center;justify-content:center;background:#000;border:1px solid #27272a;overflow:hidden}
+    #display{display:none;outline:none;image-rendering:pixelated;transform-origin:center center}
+    #overlay{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:14px;text-align:center;background:rgba(5,5,6,.97)}
+    #spinner{width:20px;height:20px;border:2px solid #27272a;border-top-color:#38bdf8;border-radius:50%;animation:spin .8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    #stage{padding:3px 7px;border-radius:4px;border:1px solid #0369a1;color:#38bdf8;background:#082f49;font-size:9px;font-weight:800}
+    #message{max-width:220px;color:#a1a1aa;font-size:10px;line-height:1.45}
+    #error{display:none;width:100%;max-height:145px;overflow:auto;white-space:pre-wrap;word-break:break-word;text-align:left;padding:7px;border-radius:5px;border:1px solid #7f1d1d;background:#18181b;color:#fca5a5;font-size:9px}
+    #retry{display:none;padding:6px 10px;border-radius:6px;border:1px solid #7c3aed;background:#2e1065;color:#ddd6fe;font:700 10px ui-monospace;cursor:pointer}
   </style>
 </head>
 <body>
@@ -50,596 +25,419 @@
     <div id="overlay">
       <div id="spinner" style="display:none"></div>
       <div id="stage">IDLE</div>
-      <div id="message">Runner ready. Click Run Original JAR.</div>
+      <div id="message">Runner sẵn sàng.</div>
+      <button id="retry" type="button">Thử runtime dự phòng</button>
       <div id="error"></div>
     </div>
   </div>
 
-  <script type="module">
-    /*
-     * NRO Studio FreeJ2ME runner fix.
-     * Key differences from the previous runner:
-     *  - Uses CheerpJ's /app virtual path for freej2me-web.jar (same pattern as upstream freej2me-web).
-     *  - Implements Shell_waitForAndDispatchEvents, which FreeJ2ME needs for its event loop.
-     *  - Handles SEND_KEY from the React parent and maps NRO/J2ME key codes to browser key codes.
-     *  - Initializes window.libmedia and a safe no-op MIDI backend so media native bridges do not crash.
-     *  - Sends a real JAR_ACK only after the standalone runner actually receives the JAR.
-     *  - Uses current stable CheerpJ 4.3 by default (query ?cj=upstream selects FreeJ2ME's pinned build).
-     *  - Has stage timeouts and root-cause logging instead of an infinite spinner.
-     */
+<script type="module">
+const sp = new URLSearchParams(location.search);
+const RUN_ID = sp.get('run') || 'legacy';
+const IS_TOP_LEVEL = window.top === window;
+const BRIDGE_TARGET = window.opener && !window.opener.closed
+  ? window.opener
+  : (window.parent !== window ? window.parent : null);
 
-    const sp = new URLSearchParams(location.search);
-    const STANDALONE_REQUESTED = sp.get('standalone') === '1' || sp.get('popout') === '1';
-    const RUN_ID = sp.get('run') || 'legacy';
-    const IS_TOP_LEVEL = window.top === window;
-    const BRIDGE_TARGET = (window.opener && !window.opener.closed)
-      ? window.opener
-      : (window.parent !== window ? window.parent : null);
-    const CHEERPJ_VARIANT = sp.get('cj') || 'stable';
-    // Test runner default: wipe only the current MIDlet RMS before each launch.
-    // This gives a real fresh login/game-data state while preserving emulator config.
-    // ?reset=none preserves RMS; ?reset=full removes the whole FreeJ2ME app folder.
-    const RESET_MODE = sp.get('reset') || 'rms';
-    const CHEERPJ_LOADER = CHEERPJ_VARIANT === 'upstream'
-      ? 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js'
-      : 'https://cjrtnc.leaningtech.com/4.3/loader.js';
-    const CORE_HTTP_ROOT = '/emulator/core';
-    const CORE_CHEERPJ_ROOT = '/app/emulator/core';
-    const FREEJ2ME_LIBRARY = `${CORE_CHEERPJ_ROOT}/freej2me-web.jar`;
-    const STAGE_TIMEOUT_MS = 45000;
+const CORE_HTTP_ROOT = '/emulator/core';
+const CORE_CHEERPJ_ROOT = '/app/emulator/core';
+const FREEJ2ME_LIBRARY = `${CORE_CHEERPJ_ROOT}/freej2me-web.jar`;
+const REQUESTED_VARIANT = sp.get('cj') || 'stable';
+const SAVED_VARIANT = localStorage.getItem('nro-studio-cheerpj-variant');
+const CHEERPJ_VARIANT = sp.get('forcecj') || SAVED_VARIANT || REQUESTED_VARIANT;
+const RESET_MODE = sp.get('reset') || 'rms';
+const CHEERPJ_LOADER = CHEERPJ_VARIANT === 'upstream'
+  ? 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js'
+  : 'https://cjrtnc.leaningtech.com/4.3/loader.js';
 
-    const display = document.getElementById('display');
-    const screenCtx = display.getContext('2d');
-    const overlay = document.getElementById('overlay');
-    const spinner = document.getElementById('spinner');
-    const stageEl = document.getElementById('stage');
-    const messageEl = document.getElementById('message');
-    const errorEl = document.getElementById('error');
+const STAGE_TIMEOUT_MS = 45_000;
+const CORE_LOAD_TIMEOUT_MS = 28_000;
+const INIT_TIMEOUT_MS = 35_000;
 
-    let currentStage = 'IDLE';
-    let stageTimer = null;
-    let launchGeneration = 0;
+const display = document.getElementById('display');
+const screenCtx = display.getContext('2d');
+const overlay = document.getElementById('overlay');
+const spinner = document.getElementById('spinner');
+const stageEl = document.getElementById('stage');
+const messageEl = document.getElementById('message');
+const errorEl = document.getElementById('error');
+const retryBtn = document.getElementById('retry');
 
-    const runtime = {
-      runtimeScriptLoaded: false,
-      cheerpjLoaded: false,
-      runtimeInitialized: false,
-      freej2meLoaded: false,
-      gameJarMounted: false,
-      midletStarted: false,
-      canvasConnected: false,
-      lib: null,
-      FreeJ2ME: null,
-      launcherUtil: null,
-      mainPromise: null,
-      jarPath: null,
-      appId: null,
-      jarSha256: null,
-    };
+let currentStage = 'IDLE';
+let stageTimer = null;
+let launchGeneration = 0;
+let pendingLaunch = null;
 
-    function post(type, payload = {}) {
-      // In standalone mode window.parent === window, so parent.postMessage would
-      // only message ourselves. The editor is window.opener.
-      if (!BRIDGE_TARGET) return;
-      try { BRIDGE_TARGET.postMessage({ type, runId: RUN_ID, ...payload }, '*'); } catch (_) {}
-    }
+const runtime = {
+  runtimeScriptLoaded:false,
+  cheerpjLoaded:false,
+  runtimeInitialized:false,
+  freej2meLoaded:false,
+  gameJarMounted:false,
+  midletStarted:false,
+  canvasConnected:false,
+  lib:null,
+  FreeJ2ME:null,
+  launcherUtil:null,
+  mainPromise:null,
+  jarPath:null,
+  appId:null,
+};
 
-    function log(level, message) {
-      const text = String(message);
-      const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
-      try { fn.call(console, `[NRO runner] ${text}`); } catch (_) {}
-      post('LOG', {
-        entry: {
-          id: `runner-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
-          timestamp: new Date().toLocaleTimeString(),
-          level,
-          message: text,
-        }
-      });
-    }
+function post(type,payload={}) {
+  if (!BRIDGE_TARGET) return;
+  try { BRIDGE_TARGET.postMessage({type,runId:RUN_ID,...payload},'*'); } catch {}
+}
+function log(level,message) {
+  const text=String(message);
+  (level==='error'?console.error:level==='warn'?console.warn:console.log)(`[NRO runner] ${text}`);
+  post('LOG',{entry:{id:`runner-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,timestamp:new Date().toLocaleTimeString(),level,message:text}});
+}
+function runtimeInfo() {
+  return {
+    runtimeScriptLoaded:runtime.runtimeScriptLoaded,
+    cheerpjLoaded:runtime.cheerpjLoaded,
+    runtimeInitialized:runtime.runtimeInitialized,
+    freej2meLoaded:runtime.freej2meLoaded,
+    gameJarMounted:runtime.gameJarMounted,
+    midletStarted:runtime.midletStarted,
+    canvasConnected:runtime.canvasConnected,
+  };
+}
+function clearStageTimer(){ if(stageTimer) clearTimeout(stageTimer); stageTimer=null; }
+function setStage(stage,message,error=null) {
+  clearStageTimer();
+  currentStage=stage;
+  stageEl.textContent=stage;
+  messageEl.textContent=message||stage;
+  errorEl.style.display=error?'block':'none';
+  errorEl.textContent=error?String(error):'';
+  retryBtn.style.display='none';
+  const busy=!['IDLE','RUNTIME_READY','RUNNING','ERROR','STOPPED'].includes(stage);
+  spinner.style.display=busy?'block':'none';
+  if(stage==='RUNNING'){
+    overlay.style.display='none';
+    display.style.display='block';
+    try{display.focus()}catch{}
+  }else{
+    overlay.style.display='flex';
+  }
+  post('STATUS_CHANGE',{status:stage,stage,message,error:error?String(error):undefined,runtimeInfo:runtimeInfo()});
+  if(busy){
+    const stageAtStart=stage;
+    stageTimer=setTimeout(()=>{
+      if(currentStage===stageAtStart) fatal(`Treo ở ${stageAtStart}`,`Không có tiến triển trong ${Math.round(STAGE_TIMEOUT_MS/1000)} giây.`);
+    },STAGE_TIMEOUT_MS);
+  }
+}
+function fatal(title,err,allowRetry=false){
+  const detail=err instanceof Error?(err.stack||err.message):String(err||title);
+  log('error',`${title}: ${detail}`);
+  setStage('ERROR',title,detail);
+  if(allowRetry) retryBtn.style.display='block';
+}
+function withTimeout(promise,ms,label){
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_,reject)=>{
+      timer=setTimeout(()=>reject(new Error(`${label} quá ${Math.round(ms/1000)}s`)),ms);
+    })
+  ]).finally(()=>clearTimeout(timer));
+}
+window.addEventListener('error',e=>fatal('Runner JavaScript error',e.error||`${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection',e=>fatal('Runner promise rejection',e.reason));
 
-    function runtimeInfo() {
-      return {
-        runtimeScriptLoaded: runtime.runtimeScriptLoaded,
-        cheerpjLoaded: runtime.cheerpjLoaded,
-        runtimeInitialized: runtime.runtimeInitialized,
-        freej2meLoaded: runtime.freej2meLoaded,
-        gameJarMounted: runtime.gameJarMounted,
-        midletStarted: runtime.midletStarted,
-        canvasConnected: runtime.canvasConnected,
-      };
-    }
-
-    function clearStageTimer() {
-      if (stageTimer) clearTimeout(stageTimer);
-      stageTimer = null;
-    }
-
-    function setStage(stage, message, error = null) {
-      clearStageTimer();
-      currentStage = stage;
-      stageEl.textContent = stage;
-      messageEl.textContent = message || stage;
-      errorEl.style.display = error ? 'block' : 'none';
-      errorEl.textContent = error ? String(error) : '';
-
-      const busy = !['IDLE', 'RUNNING', 'ERROR', 'STOPPED'].includes(stage);
-      spinner.style.display = busy ? 'block' : 'none';
-
-      if (stage === 'RUNNING') {
-        overlay.style.display = 'none';
-        display.style.display = 'block';
-        try { display.focus(); } catch (_) {}
-      } else {
-        overlay.style.display = 'flex';
-      }
-
-      post('STATUS_CHANGE', {
-        status: stage,
-        stage,
-        message,
-        error: error ? String(error) : undefined,
-        runtimeInfo: runtimeInfo(),
-      });
-
-      if (busy) {
-        const stageAtStart = stage;
-        stageTimer = setTimeout(() => {
-          if (currentStage !== stageAtStart) return;
-          fatal(`Timed out at ${stageAtStart}`, `No progress for ${Math.round(STAGE_TIMEOUT_MS/1000)} seconds.`);
-        }, STAGE_TIMEOUT_MS);
-      }
-    }
-
-    function fatal(title, err) {
-      const detail = err instanceof Error ? (err.stack || err.message) : String(err || title);
-      log('error', `${title}: ${detail}`);
-      setStage('ERROR', title, detail);
-    }
-
-    window.addEventListener('error', (e) => {
-      fatal('Uncaught runner error', e.error || `${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`);
+/* ---------- tiny IndexedDB cache for automatic runtime fallback ---------- */
+const CACHE_DB='nro-studio-runner-cache';
+const CACHE_STORE='launch';
+function openCacheDb(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(CACHE_DB,1);
+    req.onupgradeneeded=()=>{ if(!req.result.objectStoreNames.contains(CACHE_STORE)) req.result.createObjectStore(CACHE_STORE); };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function cacheLaunch(value){
+  try{
+    const db=await openCacheDb();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(CACHE_STORE,'readwrite');
+      tx.objectStore(CACHE_STORE).put(value,RUN_ID);
+      tx.oncomplete=resolve; tx.onerror=()=>reject(tx.error);
     });
-    window.addEventListener('unhandledrejection', (e) => {
-      fatal('Unhandled runner promise rejection', e.reason);
+    db.close();
+  }catch(e){ log('warn',`Không cache được launch payload: ${e?.message||e}`); }
+}
+async function readCachedLaunch(){
+  try{
+    const db=await openCacheDb();
+    const value=await new Promise((resolve,reject)=>{
+      const tx=db.transaction(CACHE_STORE,'readonly');
+      const req=tx.objectStore(CACHE_STORE).get(RUN_ID);
+      req.onsuccess=()=>resolve(req.result||null); req.onerror=()=>reject(req.error);
     });
-
-    class EventQueue {
-      constructor() {
-        this.started = false;
-        this.queue = [];
-        this.waiter = null;
-      }
-      queueEvent(evt, skipIfExists = null) {
-        if (!this.started) return;
-        if (skipIfExists && this.queue.some(skipIfExists)) return;
-        this.queue.push(evt);
-        if (this.waiter) {
-          const resolve = this.waiter;
-          this.waiter = null;
-          resolve();
-        }
-      }
-      async waitForEvent() {
-        this.started = true;
-        if (!this.queue.length) {
-          await new Promise(resolve => { this.waiter = resolve; });
-        }
-        return this.queue.shift();
-      }
-      reset() {
-        this.queue.length = 0;
-        if (this.waiter) {
-          const resolve = this.waiter;
-          this.waiter = null;
-          resolve();
-        }
-      }
-    }
-
-    const evtQueue = new EventQueue();
-    window.evtQueue = evtQueue;
-
-    // Parent sends J2ME-style values. FreeJ2ME's JS shell expects browser keyCode values.
-    function mapParentKey(keyCode) {
-      const map = {
-        [-1]: 38, // up
-        [-2]: 40, // down
-        [-3]: 37, // left
-        [-4]: 39, // right
-        [-5]: 13, // fire / enter
-        [-6]: 112, // left softkey / F1
-        [-7]: 113, // right softkey / F2
-        [42]: 106, // * -> NumpadMultiply
-        [35]: 111, // # -> NumpadDivide
-      };
-      return map[keyCode] ?? keyCode;
-    }
-
-    function symbolForParentKey(keyCode) {
-      if (keyCode >= 48 && keyCode <= 57) return keyCode;
-      if (keyCode === 42) return 42;
-      if (keyCode === 35) return 35;
-      return 0;
-    }
-
-    function enqueueParentKey(keyCode, action) {
-      const browserCode = mapParentKey(Number(keyCode));
-      const kind = action === 'up' ? 'keyup' : 'keydown';
-      evtQueue.queueEvent({
-        kind,
-        args: [browserCode, symbolForParentKey(Number(keyCode)), false, false],
-      });
-    }
-
-    // Also allow direct keyboard focus inside the iframe, useful for debugging without the phone shell.
-    const keyboardCodeMap = {
-      Enter: 13, ArrowLeft: 37, ArrowRight: 39, ArrowUp: 38, ArrowDown: 40,
-      F1: 112, F2: 113,
-      Digit0: 48, Digit1: 49, Digit2: 50, Digit3: 51, Digit4: 52,
-      Digit5: 53, Digit6: 54, Digit7: 55, Digit8: 56, Digit9: 57,
-      NumpadMultiply: 106, NumpadDivide: 111,
-    };
-    display.addEventListener('keydown', (e) => {
-      const code = keyboardCodeMap[e.code];
-      if (code == null) return;
-      evtQueue.queueEvent({ kind: 'keydown', args: [code, e.key?.length === 1 ? e.key.charCodeAt(0) : 0, !!e.ctrlKey, !!e.shiftKey] });
-      e.preventDefault();
+    db.close(); return value;
+  }catch{return null}
+}
+async function clearCachedLaunch(){
+  try{
+    const db=await openCacheDb();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(CACHE_STORE,'readwrite');
+      tx.objectStore(CACHE_STORE).delete(RUN_ID);
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
     });
-    display.addEventListener('keyup', (e) => {
-      const code = keyboardCodeMap[e.code];
-      if (code == null) return;
-      evtQueue.queueEvent({ kind: 'keyup', args: [code, e.key?.length === 1 ? e.key.charCodeAt(0) : 0, !!e.ctrlKey, !!e.shiftKey] });
-      e.preventDefault();
-    });
+    db.close();
+  }catch{}
+}
+function fallbackToUpstream(reason){
+  localStorage.setItem('nro-studio-cheerpj-variant','upstream');
+  log('warn',`Stable runtime bị treo: ${reason}. Chuyển sang runtime dự phòng.`);
+  const next=new URL(location.href);
+  next.searchParams.set('forcecj','upstream');
+  next.searchParams.set('fallback','1');
+  next.searchParams.set('t',String(Date.now()));
+  location.replace(next.toString());
+}
+retryBtn.addEventListener('click',()=>fallbackToUpstream('manual retry'));
 
-    // Pointer bridge (FreeJ2ME Canvas pointer events).
-    let pointerDown = false;
-    function pointerXY(e) {
-      const rect = display.getBoundingClientRect();
-      return {
-        x: Math.max(0, Math.floor((e.clientX - rect.left) * display.width / Math.max(1, rect.width))),
-        y: Math.max(0, Math.floor((e.clientY - rect.top) * display.height / Math.max(1, rect.height))),
-      };
+/* ---------- input queue ---------- */
+class EventQueue{
+  constructor(){this.started=false;this.queue=[];this.waiter=null}
+  queueEvent(evt,skip=null){
+    if(!this.started)return;
+    if(skip&&this.queue.some(skip))return;
+    this.queue.push(evt);
+    if(this.waiter){const r=this.waiter;this.waiter=null;r()}
+  }
+  async waitForEvent(){
+    this.started=true;
+    if(!this.queue.length) await new Promise(r=>{this.waiter=r});
+    return this.queue.shift();
+  }
+  reset(){this.queue.length=0;if(this.waiter){const r=this.waiter;this.waiter=null;r()}}
+}
+const evtQueue=new EventQueue();
+function mapParentKey(k){return ({[-1]:38,[-2]:40,[-3]:37,[-4]:39,[-5]:13,[-6]:112,[-7]:113,[42]:106,[35]:111})[k]??k}
+function symbolForParentKey(k){return (k>=48&&k<=57)||k===42||k===35?k:0}
+function enqueueParentKey(k,action){
+  k=Number(k);
+  evtQueue.queueEvent({kind:action==='up'?'keyup':'keydown',args:[mapParentKey(k),symbolForParentKey(k),false,false]});
+}
+const keyboardCodeMap={Enter:13,ArrowLeft:37,ArrowRight:39,ArrowUp:38,ArrowDown:40,F1:112,F2:113,Digit0:48,Digit1:49,Digit2:50,Digit3:51,Digit4:52,Digit5:53,Digit6:54,Digit7:55,Digit8:56,Digit9:57,NumpadMultiply:106,NumpadDivide:111};
+display.addEventListener('keydown',e=>{const c=keyboardCodeMap[e.code];if(c==null)return;evtQueue.queueEvent({kind:'keydown',args:[c,e.key?.length===1?e.key.charCodeAt(0):0,!!e.ctrlKey,!!e.shiftKey]});e.preventDefault()});
+display.addEventListener('keyup',e=>{const c=keyboardCodeMap[e.code];if(c==null)return;evtQueue.queueEvent({kind:'keyup',args:[c,e.key?.length===1?e.key.charCodeAt(0):0,!!e.ctrlKey,!!e.shiftKey]});e.preventDefault()});
+let pointerDown=false;
+function pointerXY(e){const r=display.getBoundingClientRect();return{x:Math.max(0,Math.floor((e.clientX-r.left)*display.width/Math.max(1,r.width))),y:Math.max(0,Math.floor((e.clientY-r.top)*display.height/Math.max(1,r.height)))}}
+display.addEventListener('pointerdown',e=>{pointerDown=true;display.setPointerCapture?.(e.pointerId);display.focus();evtQueue.queueEvent({kind:'pointerpressed',...pointerXY(e)})});
+display.addEventListener('pointermove',e=>{if(pointerDown)evtQueue.queueEvent({kind:'pointerdragged',...pointerXY(e)})});
+display.addEventListener('pointerup',e=>{pointerDown=false;evtQueue.queueEvent({kind:'pointerreleased',...pointerXY(e)})});
+
+/* ---------- runtime ---------- */
+async function loadCheerpJScript(){
+  if(typeof window.cheerpjInit==='function'){runtime.runtimeScriptLoaded=true;runtime.cheerpjLoaded=true;return}
+  setStage('LOADING_RUNTIME',`Đang tải CheerpJ ${CHEERPJ_VARIANT}...`);
+  log('info',`[1] Loading CheerpJ ${CHEERPJ_VARIANT}: ${CHEERPJ_LOADER}`);
+  await withTimeout(new Promise((resolve,reject)=>{
+    const s=document.createElement('script');s.src=CHEERPJ_LOADER;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error('loader.js load failed'));document.head.appendChild(s);
+  }),20_000,'CheerpJ loader');
+  runtime.runtimeScriptLoaded=true;
+  runtime.cheerpjLoaded=typeof window.cheerpjInit==='function';
+  if(!runtime.cheerpjLoaded)throw new Error('loader.js loaded nhưng cheerpjInit không tồn tại');
+  log('info','[2] CheerpJ loader ready.');
+}
+function makeMidiStub(){
+  const player={duration:0,volume:1,async setSequence(){this.duration=0},play(){},loop(){},stop(){},shortEvent(){},async getPosition(){return 0},seek(){},close(){},addEventListener(){},removeEventListener(){}};
+  return{midiPlayer:player,async init(){},async close(){}};
+}
+async function initializeRuntime(){
+  if(runtime.freej2meLoaded&&runtime.FreeJ2ME&&runtime.launcherUtil)return;
+  if(!IS_TOP_LEVEL)throw new Error('STANDALONE_RUNNER_REQUIRED: AI Studio nested iframe không chạy CheerpJ ổn định.');
+
+  await loadCheerpJScript();
+  setStage('LOADING_RUNTIME','Đang khởi tạo native bridge...');
+
+  const [fontMod,graphicsMod,glesMod,jsRefMod,mediaBridgeMod,midiBridgeMod,mediaMod]=await Promise.all([
+    import(`${CORE_HTTP_ROOT}/libjs/libcanvasfont.js`),
+    import(`${CORE_HTTP_ROOT}/libjs/libcanvasgraphics.js`),
+    import(`${CORE_HTTP_ROOT}/libjs/libgles2.js`),
+    import(`${CORE_HTTP_ROOT}/libjs/libjsreference.js`),
+    import(`${CORE_HTTP_ROOT}/libjs/libmediabridge.js`),
+    import(`${CORE_HTTP_ROOT}/libjs/libmidibridge.js`),
+    import(`${CORE_HTTP_ROOT}/libmedia/libmedia.js`),
+  ]);
+
+  window.libmedia=new mediaMod.LibMedia();
+  await window.libmedia.init?.();
+  window.libmidi=makeMidiStub();
+
+  const natives={
+    ...(fontMod.default||fontMod),...(graphicsMod.default||graphicsMod),...(glesMod.default||glesMod),
+    ...(jsRefMod.default||jsRefMod),...(mediaBridgeMod.default||mediaBridgeMod),...(midiBridgeMod.default||midiBridgeMod),
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_setTitle(_lib,title){document.title=String(title||'J2ME')},
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_setIcon(){},
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_getScreenCtx(){runtime.canvasConnected=true;return screenCtx},
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_setCanvasSize(_lib,w,h){
+      display.width=Number(w);display.height=Number(h);display.style.display='block';runtime.canvasConnected=true;
+      setStage('RUNNING',`Game running (${w}x${h})`);log('info',`[frame] Canvas ${w}x${h}`);
+      await clearCachedLaunch();
+    },
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_waitForAndDispatchEvents(lib,listener){
+      const KeyEvent=await lib.pl.zb3.freej2me.bridge.shell.KeyEvent;
+      const PointerEvent=await lib.pl.zb3.freej2me.bridge.shell.PointerEvent;
+      const evt=await evtQueue.waitForEvent();if(!evt)return;
+      if(evt.kind==='keydown')await listener.keyPressed(await new KeyEvent(...evt.args));
+      else if(evt.kind==='keyup')await listener.keyReleased(await new KeyEvent(...evt.args));
+      else if(evt.kind==='pointerpressed')await listener.pointerPressed(await new PointerEvent(evt.x,evt.y));
+      else if(evt.kind==='pointerdragged')await listener.pointerDragged(await new PointerEvent(evt.x,evt.y));
+      else if(evt.kind==='pointerreleased')await listener.pointerReleased(await new PointerEvent(evt.x,evt.y));
+      else if(evt.kind==='player-eom')await listener.playerEOM(evt.player);
+      else if(evt.kind==='player-video-frame')await listener.playerVideoFrame(evt.player);
+    },
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_restart(){location.reload()},
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_exit(){setStage('STOPPED','MIDlet exited.')},
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_sthop(){},
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_say(_lib,msg){log('info',`[FreeJ2ME] ${msg}`)},
+    async Java_pl_zb3_freej2me_bridge_shell_Shell_sayObject(_lib,label){log('debug',`[FreeJ2ME object] ${label}`)},
+  };
+
+  log('info',`[3] cheerpjInit via ${CHEERPJ_VARIANT}; topLevel=${IS_TOP_LEVEL}; secure=${window.isSecureContext}`);
+  await withTimeout(window.cheerpjInit({
+    version:8,status:'none',enableDebug:true,natives,
+    preloadProgress(done,total){
+      if(total){const pct=Math.floor(done/total*100);if(pct%10===0)setStage('LOADING_RUNTIME',`CheerpJ preload ${pct}%`)}
     }
-    display.addEventListener('pointerdown', (e) => {
-      pointerDown = true; display.setPointerCapture?.(e.pointerId); display.focus();
-      const p = pointerXY(e); evtQueue.queueEvent({ kind: 'pointerpressed', ...p });
-    });
-    display.addEventListener('pointermove', (e) => {
-      if (!pointerDown) return; const p = pointerXY(e); evtQueue.queueEvent({ kind: 'pointerdragged', ...p });
-    });
-    display.addEventListener('pointerup', (e) => {
-      pointerDown = false; const p = pointerXY(e); evtQueue.queueEvent({ kind: 'pointerreleased', ...p });
-    });
+  }),INIT_TIMEOUT_MS,'cheerpjInit');
+  runtime.runtimeInitialized=true;
+  log('info','[4] CheerpJ initialized.');
 
-    async function loadCheerpJScript() {
-      if (typeof window.cheerpjInit === 'function') {
-        runtime.runtimeScriptLoaded = true;
-        runtime.cheerpjLoaded = true;
-        return;
-      }
-      setStage('LOADING_RUNTIME', 'Loading CheerpJ runtime...');
-      log('info', `[1] Loading CheerpJ: ${CHEERPJ_LOADER}`);
-      await new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = CHEERPJ_LOADER;
-        script.async = true;
-        script.onload = resolve;
-        script.onerror = () => reject(new Error('CheerpJ loader.js failed to load (network/CSP/CORS).'));
-        document.head.appendChild(script);
-      });
-      runtime.runtimeScriptLoaded = true;
-      runtime.cheerpjLoaded = typeof window.cheerpjInit === 'function';
-      if (!runtime.cheerpjLoaded) throw new Error('loader.js loaded but window.cheerpjInit is unavailable.');
-      log('info', '[2] CheerpJ loader ready.');
+  try{
+    const res=await fetch(`${CORE_HTTP_ROOT}/freej2me-web.jar`,{cache:'no-store'});
+    if(!res.ok)throw new Error(`HTTP ${res.status}`);
+    log('info',`[core] HTTP asset OK (${res.headers.get('content-length')||'?'} bytes)`);
+  }catch(e){
+    throw new Error(`Không đọc được FreeJ2ME core qua HTTP: ${e?.message||e}`);
+  }
+
+  setStage('LOADING_RUNTIME',`Loading FreeJ2ME core: ${FREEJ2ME_LIBRARY}`);
+  log('info',`[5] cheerpjRunLibrary(${FREEJ2ME_LIBRARY})`);
+  try{
+    runtime.lib=await withTimeout(window.cheerpjRunLibrary(FREEJ2ME_LIBRARY),CORE_LOAD_TIMEOUT_MS,'cheerpjRunLibrary');
+  }catch(e){
+    if(CHEERPJ_VARIANT!=='upstream'){
+      await cacheLaunch(pendingLaunch).catch(()=>{});
+      fallbackToUpstream(e?.message||e);
+      return new Promise(()=>{});
     }
+    throw e;
+  }
+  runtime.FreeJ2ME=await runtime.lib.org.recompile.freej2me.FreeJ2ME;
+  runtime.launcherUtil=await runtime.lib.pl.zb3.freej2me.launcher.LauncherUtil;
+  runtime.freej2meLoaded=true;
+  setStage('RUNTIME_READY',`FreeJ2ME ready (${CHEERPJ_VARIANT}).`);
+  log('info','[6] FreeJ2ME library ready.');
+}
 
-    function makeMidiStub() {
-      const player = {
-        duration: 0,
-        volume: 1,
-        async setSequence() { this.duration = 0; },
-        play() {}, loop() {}, stop() {}, shortEvent() {},
-        async getPosition() { return 0; },
-        seek() {}, close() {},
-        addEventListener() {}, removeEventListener() {},
-      };
-      return { midiPlayer: player, async init() {}, async close() {} };
+async function mountJar(buffer,fileName){
+  setStage('MOUNTING_JAR',`Mounting ${fileName}...`);
+  if(!(buffer instanceof ArrayBuffer))throw new Error('jarBuffer không phải ArrayBuffer');
+  if(!runtime.lib||!runtime.launcherUtil)throw new Error('FreeJ2ME chưa init');
+  try{await runtime.launcherUtil.resetTmpDir()}catch(e){log('warn',`resetTmpDir: ${e?.message||e}`)}
+  const File=await runtime.lib.java.io.File;
+  const safe=String(fileName||'game.jar').replace(/[^a-zA-Z0-9._-]/g,'_');
+  const path=`/files/_tmp/${Date.now()}_${safe}`;
+  const jarFile=await new File(path);
+  await runtime.launcherUtil.copyJar(new Int8Array(buffer),jarFile);
+  runtime.jarPath=path;runtime.gameJarMounted=true;
+  setStage('JAR_MOUNTED',`JAR mounted: ${path}`);log('info',`[7] Mounted ${buffer.byteLength} bytes`);
+  return path;
+}
+async function detectAppId(jarPath,fileName){
+  const File=await runtime.lib.java.io.File;
+  const MIDletLoader=await runtime.lib.org.recompile.mobile.MIDletLoader;
+  const jarFile=await new File(jarPath);
+  const loader=await MIDletLoader.getMIDletLoader(jarFile);
+  if(!loader)throw new Error('MIDletLoader không mở được JAR');
+  await runtime.launcherUtil.ensureAppId(loader,String(fileName||'game.jar'));
+  return String(await loader.getAppId());
+}
+async function resetPersistentGameData(jarPath,fileName){
+  if(RESET_MODE==='none')return;
+  const appId=await detectAppId(jarPath,fileName);
+  setStage('JAR_MOUNTED',`Reset test data: ${appId}...`);
+  if(RESET_MODE==='full')await runtime.launcherUtil.uninstallApp(appId);
+  else await runtime.launcherUtil.wipeAppData(appId);
+}
+async function startMidlet(jarPath){
+  setStage('STARTING_MIDLET','Starting MIDlet...');
+  if(!runtime.FreeJ2ME)throw new Error('FreeJ2ME entry class missing');
+  runtime.midletStarted=true;
+  log('info',`[8] FreeJ2ME.main(['jar','${jarPath}'])`);
+  runtime.mainPromise=runtime.FreeJ2ME.main(['jar',jarPath]);
+  Promise.resolve(runtime.mainPromise).catch(e=>fatal('MIDlet crashed',e));
+  log('info','[9] MIDlet launched; waiting for first Canvas.');
+}
+async function launch(payload){
+  pendingLaunch=payload;
+  await cacheLaunch(payload);
+  const generation=++launchGeneration;
+  const {jarBuffer,fileName}=payload;
+  if(!(jarBuffer instanceof ArrayBuffer))throw new Error('LOAD_JAR thiếu ArrayBuffer');
+  post('JAR_ACK',{fileName,byteLength:jarBuffer.byteLength});
+  log('info',`[handoff] JAR received: ${fileName} (${jarBuffer.byteLength} bytes)`);
+  await initializeRuntime();if(generation!==launchGeneration)return;
+  const path=await mountJar(jarBuffer,fileName);if(generation!==launchGeneration)return;
+  await resetPersistentGameData(path,fileName);if(generation!==launchGeneration)return;
+  await startMidlet(path);
+}
+async function runSelfTest(){
+  try{
+    setStage('LOADING_RUNTIME','Self-test runtime...');
+    await initializeRuntime();
+    post('SELF_TEST_RESULT',{status:'PASS',stage:currentStage,runtimeInfo:runtimeInfo()});
+  }catch(e){
+    const reason=e instanceof Error?(e.stack||e.message):String(e);
+    post('SELF_TEST_RESULT',{status:'FAIL',stage:currentStage,rootCause:reason,runtimeInfo:runtimeInfo()});
+    fatal('EMULATOR SELF-TEST: FAIL',e,true);
+  }
+}
+
+window.addEventListener('message',async event=>{
+  if(!BRIDGE_TARGET||event.source!==BRIDGE_TARGET)return;
+  const data=event.data;if(!data||typeof data!=='object')return;
+  if(data.type==='PING'){post('PONG',{stage:currentStage,runtimeInfo:runtimeInfo()});return}
+  if(data.type==='RUN_SELF_TEST'){await runSelfTest();return}
+  if(data.type==='SEND_KEY'){enqueueParentKey(data.keyCode,data.keyAction);return}
+  if(data.type==='STOP'){clearStageTimer();evtQueue.reset();setStage('STOPPED','Stopped.');return}
+  if(data.type==='LOAD_JAR'){
+    if(runtime.midletStarted||runtime.gameJarMounted){fatal('Fresh JVM required','Runner này đã chạy một JAR. Bấm chạy lại từ editor để mở runtime mới.');return}
+    try{await launch({jarBuffer:data.jarBuffer,fileName:data.fileName,mainClass:data.mainClass,manifest:data.manifest})}
+    catch(e){fatal('Không khởi động được JAR',e,true)}
+  }
+});
+
+async function bootstrap(){
+  if(!IS_TOP_LEVEL){
+    setStage('IDLE','Preview nhúng chỉ là placeholder. Chạy game từ editor sẽ mở runner top-level.');
+    post('IFRAME_READY',{runnerVersion:'phase15-placeholder',runtimeInfo:runtimeInfo()});
+    return;
+  }
+
+  post('IFRAME_READY',{runnerVersion:`phase15-${CHEERPJ_VARIANT}`,runtimeInfo:runtimeInfo()});
+  setStage('IDLE',`Runner ${CHEERPJ_VARIANT} sẵn sàng.`);
+
+  // Nếu stable vừa timeout và page tự reload sang upstream, payload JAR vẫn nằm trong IndexedDB.
+  if(sp.get('fallback')==='1'){
+    const cached=await readCachedLaunch();
+    if(cached?.jarBuffer){
+      log('info','[fallback] Khôi phục JAR từ runner cache và tiếp tục với runtime dự phòng.');
+      try{await launch(cached)}catch(e){fatal('Runtime dự phòng cũng thất bại',e,true)}
     }
-
-    async function initializeRuntime() {
-      if (runtime.freej2meLoaded && runtime.FreeJ2ME && runtime.launcherUtil) return;
-
-      // Hard gate: never call cheerpjInit from the embedded AI Studio iframe.
-      // v2 silently fell back to the iframe, which is why the runtime log showed topLevel=false.
-      if (!IS_TOP_LEVEL) {
-        throw new Error('STANDALONE_RUNNER_REQUIRED: window.top !== window. Embedded CheerpJ execution is disabled in v3.');
-      }
-
-      await loadCheerpJScript();
-      setStage('LOADING_RUNTIME', 'Initializing CheerpJ + FreeJ2ME native bridges...');
-
-      const [fontMod, graphicsMod, glesMod, jsRefMod, mediaBridgeMod, midiBridgeMod, mediaMod] = await Promise.all([
-        import(`${CORE_HTTP_ROOT}/libjs/libcanvasfont.js`),
-        import(`${CORE_HTTP_ROOT}/libjs/libcanvasgraphics.js`),
-        import(`${CORE_HTTP_ROOT}/libjs/libgles2.js`),
-        import(`${CORE_HTTP_ROOT}/libjs/libjsreference.js`),
-        import(`${CORE_HTTP_ROOT}/libjs/libmediabridge.js`),
-        import(`${CORE_HTTP_ROOT}/libjs/libmidibridge.js`),
-        import(`${CORE_HTTP_ROOT}/libmedia/libmedia.js`),
-      ]);
-
-      // MediaBridge assumes these globals exist (see current repo's libmediabridge.js).
-      window.libmedia = new mediaMod.LibMedia();
-      await window.libmedia.init?.();
-      // Repository does not currently vendor upstream libmidi/, so provide a safe no-op MIDI backend.
-      // This keeps games that touch MIDI from crashing; it intentionally produces no MIDI sound.
-      window.libmidi = makeMidiStub();
-
-      const natives = {
-        ...(fontMod.default || fontMod),
-        ...(graphicsMod.default || graphicsMod),
-        ...(glesMod.default || glesMod),
-        ...(jsRefMod.default || jsRefMod),
-        ...(mediaBridgeMod.default || mediaBridgeMod),
-        ...(midiBridgeMod.default || midiBridgeMod),
-
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_setTitle(_lib, title) {
-          document.title = String(title || 'J2ME');
-        },
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_setIcon() {},
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_getScreenCtx() {
-          runtime.canvasConnected = true;
-          return screenCtx;
-        },
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_setCanvasSize(_lib, width, height) {
-          display.width = Number(width);
-          display.height = Number(height);
-          display.style.display = 'block';
-          runtime.canvasConnected = true;
-          setStage('RUNNING', `Game running (${width}x${height})`);
-          log('info', `[frame] Canvas connected at ${width}x${height}.`);
-        },
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_waitForAndDispatchEvents(lib, listener) {
-          const KeyEvent = await lib.pl.zb3.freej2me.bridge.shell.KeyEvent;
-          const PointerEvent = await lib.pl.zb3.freej2me.bridge.shell.PointerEvent;
-          const evt = await evtQueue.waitForEvent();
-          if (!evt) return;
-          if (evt.kind === 'keydown') {
-            await listener.keyPressed(await new KeyEvent(...evt.args));
-          } else if (evt.kind === 'keyup') {
-            await listener.keyReleased(await new KeyEvent(...evt.args));
-          } else if (evt.kind === 'pointerpressed') {
-            await listener.pointerPressed(await new PointerEvent(evt.x, evt.y));
-          } else if (evt.kind === 'pointerdragged') {
-            await listener.pointerDragged(await new PointerEvent(evt.x, evt.y));
-          } else if (evt.kind === 'pointerreleased') {
-            await listener.pointerReleased(await new PointerEvent(evt.x, evt.y));
-          } else if (evt.kind === 'player-eom') {
-            await listener.playerEOM(evt.player);
-          } else if (evt.kind === 'player-video-frame') {
-            await listener.playerVideoFrame(evt.player);
-          }
-        },
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_restart() { location.reload(); },
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_exit() { setStage('STOPPED', 'MIDlet exited.'); },
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_sthop() {},
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_say(_lib, msg) { log('info', `[FreeJ2ME] ${msg}`); },
-        async Java_pl_zb3_freej2me_bridge_shell_Shell_sayObject(_lib, label) { log('debug', `[FreeJ2ME object] ${label}`); },
-      };
-
-      log('info', `[3] cheerpjInit(...) via ${CHEERPJ_VARIANT} loader; topLevel=${IS_TOP_LEVEL}; hasOpener=${!!window.opener}; secure=${window.isSecureContext}; crossOriginIsolated=${window.crossOriginIsolated}`);
-      let lastPreloadPct = -1;
-      await window.cheerpjInit({
-        version: 8,
-        status: 'none',
-        enableDebug: true,
-        natives,
-        preloadProgress(done, total) {
-          if (!total) return;
-          const pct = Math.floor((done / total) * 100);
-          if (pct === lastPreloadPct || (pct % 5 !== 0 && pct !== 100)) return;
-          lastPreloadPct = pct;
-          log('info', `[CheerpJ preload] ${done}/${total} (${pct}%)`);
-          // Reset both runner and parent watchdogs while real runtime bytes are arriving.
-          setStage('LOADING_RUNTIME', `CheerpJ preload ${pct}%`);
-        },
-      });
-      runtime.runtimeInitialized = true;
-      log('info', '[4] CheerpJ initialized.');
-
-      // IMPORTANT: CheerpJ's web-root virtual filesystem uses /app/... .
-      // Upstream freej2me-web does the same before cheerpjRunLibrary().
-      setStage('LOADING_RUNTIME', `Loading FreeJ2ME core: ${FREEJ2ME_LIBRARY}`);
-      log('info', `[5] cheerpjRunLibrary(${FREEJ2ME_LIBRARY})`);
-      runtime.lib = await window.cheerpjRunLibrary(FREEJ2ME_LIBRARY);
-      runtime.FreeJ2ME = await runtime.lib.org.recompile.freej2me.FreeJ2ME;
-      runtime.launcherUtil = await runtime.lib.pl.zb3.freej2me.launcher.LauncherUtil;
-      runtime.freej2meLoaded = true;
-      setStage('RUNTIME_READY', 'FreeJ2ME runtime ready.');
-      log('info', '[6] FreeJ2ME library ready.');
-    }
-
-    async function mountJar(buffer, fileName) {
-      setStage('MOUNTING_JAR', `Mounting ${fileName}...`);
-      if (!(buffer instanceof ArrayBuffer)) throw new Error('LOAD_JAR jarBuffer is not an ArrayBuffer.');
-      if (!runtime.lib || !runtime.launcherUtil) throw new Error('FreeJ2ME runtime is not initialized.');
-
-      // Keep /files/_tmp clean, matching upstream launcher's setup.
-      try { await runtime.launcherUtil.resetTmpDir(); } catch (e) { log('warn', `resetTmpDir warning: ${e?.message || e}`); }
-
-      const File = await runtime.lib.java.io.File;
-      const safeName = String(fileName || 'game.jar').replace(/[^a-zA-Z0-9._-]/g, '_');
-      const path = `/files/_tmp/${Date.now()}_${safeName}`;
-      const jarFile = await new File(path);
-      await runtime.launcherUtil.copyJar(new Int8Array(buffer), jarFile);
-      runtime.jarPath = path;
-      runtime.gameJarMounted = true;
-      setStage('JAR_MOUNTED', `JAR mounted: ${path}`);
-      log('info', `[7] Mounted ${buffer.byteLength} bytes at ${path}.`);
-      return path;
-    }
-
-    async function sha256Hex(arrayBuffer) {
-      try {
-        if (!globalThis.crypto?.subtle) return 'unavailable';
-        const digest = await crypto.subtle.digest('SHA-256', arrayBuffer);
-        return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-      } catch (e) {
-        log('warn', `[fresh-data] SHA-256 unavailable: ${e?.message || e}`);
-        return 'unavailable';
-      }
-    }
-
-    async function detectAppId(jarPath, fileName) {
-      if (!runtime.lib || !runtime.launcherUtil) throw new Error('Runtime unavailable while detecting appId.');
-      const File = await runtime.lib.java.io.File;
-      const MIDletLoader = await runtime.lib.org.recompile.mobile.MIDletLoader;
-      const jarFile = await new File(jarPath);
-      const loader = await MIDletLoader.getMIDletLoader(jarFile);
-      if (!loader) throw new Error(`MIDletLoader could not open ${jarPath}`);
-      // Manifest MIDlet-1 normally sets appId. If it does not, use the same filename fallback
-      // as FreeJ2ME.main('jar', ...), so the wipe targets exactly the directory FreeJ2ME will use.
-      await runtime.launcherUtil.ensureAppId(loader, String(fileName || 'game.jar'));
-      const appId = String(await loader.getAppId());
-      if (!appId) throw new Error('Resolved FreeJ2ME appId is empty.');
-      runtime.appId = appId;
-      return appId;
-    }
-
-    async function resetPersistentGameData(jarPath, fileName) {
-      if (RESET_MODE === 'none') {
-        log('warn', '[fresh-data] reset=none: preserving existing RMS/login state.');
-        return;
-      }
-
-      const appId = await detectAppId(jarPath, fileName);
-      setStage('JAR_MOUNTED', `Preparing fresh test data for ${appId}...`);
-      log('info', `[fresh-data] Resolved FreeJ2ME appId: ${appId}`);
-
-      if (RESET_MODE === 'full') {
-        // Full reinstall: removes app.jar, config and RMS. The mounted test JAR lives in
-        // /files/_tmp, so uninstallApp cannot delete the candidate that is about to run.
-        await runtime.launcherUtil.uninstallApp(appId);
-        log('info', `[fresh-data] FULL RESET complete: removed app directory ${appId}.`);
-      } else {
-        // RMS is where FreeJ2ME stores javax.microedition.rms.RecordStore data:
-        //   <appId>/rms/*
-        // Login/account cache and game save state live here for this NRO MIDlet.
-        await runtime.launcherUtil.wipeAppData(appId);
-        log('info', `[fresh-data] RMS RESET complete: ${appId}/rms removed.`);
-      }
-
-      // Verify from Java's view of CheerpJ /files. A fresh run must not silently reuse RMS.
-      try {
-        const File = await runtime.lib.java.io.File;
-        const rmsDir = await new File(`${appId}/rms`);
-        const stillExists = !!(await rmsDir.exists());
-        if (RESET_MODE !== 'none' && stillExists) {
-          throw new Error(`RMS directory still exists after reset: ${appId}/rms`);
-        }
-        log('info', `[fresh-data] Verify ${appId}/rms exists after reset: ${stillExists ? 'YES' : 'NO'}`);
-      } catch (e) {
-        // Verification failure is fatal: otherwise the UI may claim a fresh run while
-        // credentials/save data are actually reused.
-        throw new Error(`Fresh-data verification failed: ${e?.message || e}`);
-      }
-    }
-
-    async function startMidlet(jarPath, mainClass) {
-      setStage('STARTING_MIDLET', `Starting ${mainClass || 'MIDlet from manifest'}...`);
-      if (!runtime.FreeJ2ME) throw new Error('FreeJ2ME entry class missing.');
-      runtime.midletStarted = true;
-      log('info', `[8] FreeJ2ME.main(['jar', '${jarPath}'])`);
-
-      // Do not await: FreeJ2ME.main stays alive while the game runs.
-      runtime.mainPromise = runtime.FreeJ2ME.main(['jar', jarPath]);
-      Promise.resolve(runtime.mainPromise).catch((e) => fatal('FreeJ2ME MIDlet crashed', e));
-      log('info', '[9] MIDlet launched; waiting for Shell_setCanvasSize / first screen.');
-    }
-
-    async function runSelfTest() {
-      try {
-        setStage('LOADING_RUNTIME', 'Self-test: initializing browser J2ME runtime...');
-        await initializeRuntime();
-        const ok = runtime.cheerpjLoaded && runtime.runtimeInitialized && runtime.freej2meLoaded;
-        if (!ok) throw new Error('Runtime state incomplete after initialization.');
-        post('SELF_TEST_RESULT', { status: 'PASS', stage: currentStage, runtimeInfo: runtimeInfo() });
-        setStage('RUNTIME_READY', 'EMULATOR SELF-TEST: PASS');
-      } catch (e) {
-        const reason = e instanceof Error ? (e.stack || e.message) : String(e);
-        post('SELF_TEST_RESULT', { status: 'FAIL', stage: currentStage, rootCause: reason, runtimeInfo: runtimeInfo() });
-        fatal('EMULATOR SELF-TEST: FAIL', e);
-      }
-    }
-
-    window.addEventListener('message', async (event) => {
-      // Standalone runner receives commands from window.opener. Embedded fallback is disabled.
-      if (!BRIDGE_TARGET || event.source !== BRIDGE_TARGET) return;
-      const data = event.data;
-      if (!data || typeof data !== 'object') return;
-
-      if (data.type === 'PING') {
-        post('PONG', { stage: currentStage, runtimeInfo: runtimeInfo() });
-        return;
-      }
-      if (data.type === 'RUN_SELF_TEST') {
-        await runSelfTest();
-        return;
-      }
-      if (data.type === 'SEND_KEY') {
-        enqueueParentKey(data.keyCode, data.keyAction);
-        return;
-      }
-      if (data.type === 'STOP') {
-        clearStageTimer();
-        evtQueue.reset();
-        setStage('STOPPED', 'Stopped. Reload/restart the standalone runner to start a fresh JVM session.');
-        return;
-      }
-      if (data.type === 'LOAD_JAR') {
-        const generation = ++launchGeneration;
-        try {
-          if (runtime.midletStarted || runtime.gameJarMounted) {
-            throw new Error('FRESH_JVM_REQUIRED: this runner page has already launched a JAR. Reload the runner before loading another build.');
-          }
-          const { jarBuffer, fileName, mainClass } = data;
-          if (!(jarBuffer instanceof ArrayBuffer)) throw new Error('Parent did not provide a valid ArrayBuffer.');
-          post('JAR_ACK', { fileName, byteLength: jarBuffer.byteLength });
-          runtime.jarSha256 = await sha256Hex(jarBuffer);
-          log('info', `[handoff] JAR received: ${fileName} (${jarBuffer.byteLength} bytes). SHA-256=${runtime.jarSha256}`);
-
-          await initializeRuntime();
-          if (generation !== launchGeneration) return;
-          const path = await mountJar(jarBuffer, fileName);
-          if (generation !== launchGeneration) return;
-          // A fresh JVM is not enough: CheerpJ /files is IndexedDB-backed and survives
-          // page/JVM restarts. Wipe this MIDlet's RMS before every test launch so login
-          // state and cached game data cannot leak from the previous build.
-          await resetPersistentGameData(path, fileName);
-          if (generation !== launchGeneration) return;
-          await startMidlet(path, mainClass);
-        } catch (e) {
-          fatal('Failed to load/start JAR', e);
-        }
-        return;
-      }
-    });
-
-    // Initial state/handshake.
-    if (!IS_TOP_LEVEL) {
-      setStage('ERROR', 'Embedded runner disabled.', 'STANDALONE_RUNNER_REQUIRED: this page must run as a top-level tab/window for CheerpJ.');
-    } else {
-      setStage('IDLE', 'Standalone runner ready. Return to NRO Studio and click Run.');
-    }
-    post('IFRAME_READY', {
-      origin: window.location.origin,
-      runnerVersion: 'nro-fix-v5-fresh-jvm-rms',
-      runId: RUN_ID,
-      topLevel: IS_TOP_LEVEL,
-      hasOpener: !!window.opener
-    });
-  </script>
+  }
+}
+bootstrap();
+</script>
 </body>
 </html>
