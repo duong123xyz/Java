@@ -1,5 +1,8 @@
 import JSZip from 'jszip';
 import { ConstantPoolEntry, ResolvedCpEntry } from './constantPool';
+import { AttributeInfo, FieldInfo, MethodInfo } from './bytecode';
+import { ItemAnalysisSessionData, ItemDraft } from './item';
+import { ClassRewriteResult } from './patch';
 
 export type EntryType = 'class' | 'png' | 'manifest' | 'resource' | 'directory';
 
@@ -52,13 +55,19 @@ export interface ClassFileInfo {
   internalClassName: string;
   className: string;
 
+  thisClassIndex?: number;
+  superClassIndex?: number;
   internalSuperClassName?: string;
   superClassName?: string;
 
   interfacesCount: number;
+  interfaces?: number[];
   fieldsCount: number;
+  fields: FieldInfo[];
   methodsCount: number;
+  methods: MethodInfo[];
   attributesCount: number;
+  attributes?: AttributeInfo[];
 
   byteLength: number;
   parsedBytes: number;
@@ -73,6 +82,9 @@ export interface LoadedJarSession {
   jarInfo: JarInfo;
   entries: JarEntryInfo[];
   classParseCache?: Map<string, ClassFileInfo>;
+  itemAnalysis?: ItemAnalysisSessionData;
+  itemDrafts?: Map<string, ItemDraft>;
+  rewritePreviews?: Map<string, ClassRewriteResult>;
 }
 
 export interface JarLoadState {

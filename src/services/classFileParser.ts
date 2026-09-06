@@ -1,7 +1,13 @@
 import { BinaryReader } from '../lib/binary/BinaryReader';
 import { ClassFileInfo } from '../types/jar';
 import { ConstantPoolEntry, CpTag } from '../types/constantPool';
-import { resolveAllEntries, resolveClassName as resolveCpClassName } from './constantPoolResolver';
+import {
+  resolveAllEntries,
+  resolveClassName as resolveCpClassName,
+  resolveUtf8,
+} from './constantPoolResolver';
+import { AttributeInfo, FieldInfo, MethodInfo } from '../types/bytecode';
+import { parseMethodCodeAttribute } from './bytecodeDecoder';
 
 export function decodeModifiedUtf8(bytes: Uint8Array): string {
   let result = '';
@@ -76,6 +82,22 @@ export function formatJavaVersion(major: number, minor: number): string {
     return minor > 0 ? `${friendly} (minor ${minor})` : friendly;
   }
   return `Java (Major ${major}.${minor})`;
+}
+
+export function formatMemberAccessFlags(flags: number): string[] {
+  const result: string[] = [];
+  if (flags & 0x0001) result.push('public');
+  if (flags & 0x0002) result.push('private');
+  if (flags & 0x0004) result.push('protected');
+  if (flags & 0x0008) result.push('static');
+  if (flags & 0x0010) result.push('final');
+  if (flags & 0x0020) result.push('synchronized');
+  if (flags & 0x0040) result.push('volatile');
+  if (flags & 0x0080) result.push('transient');
+  if (flags & 0x0100) result.push('native');
+  if (flags & 0x0400) result.push('abstract');
+  if (flags & 0x0800) result.push('strictfp');
+  return result;
 }
 
 export function formatAccessFlags(flags: number): string[] {
@@ -308,44 +330,89 @@ export function parseClassFile(buffer: ArrayBuffer): ClassFileInfo {
 
   // 5. Interfaces
   const interfacesCount = reader.readU2();
+  const interfaces: number[] = [];
   for (let i = 0; i < interfacesCount; i++) {
-    reader.skip(2); // interface index u2
+    interfaces.push(reader.readU2());
   }
 
   // 6. Fields
   const fieldsCount = reader.readU2();
+  const fields: FieldInfo[] = [];
   for (let i = 0; i < fieldsCount; i++) {
-    reader.skip(2); // access_flags
-    reader.skip(2); // name_index
-    reader.skip(2); // descriptor_index
+    const accessFlags = reader.readU2();
+    const nameIndex = reader.readU2();
+    const descriptorIndex = reader.readU2();
     const attributesCount = reader.readU2();
+    const attributes: AttributeInfo[] = [];
     for (let a = 0; a < attributesCount; a++) {
-      reader.skip(2); // attribute_name_index
+      const attributeNameIndex = reader.readU2();
       const attrLength = reader.readU4();
-      reader.skip(attrLength);
+      const data = reader.readBytes(attrLength);
+      const name = resolveUtf8(constantPool, attributeNameIndex);
+      attributes.push({ attributeNameIndex, name, data });
     }
+    const name = resolveUtf8(constantPool, nameIndex);
+    const descriptor = resolveUtf8(constantPool, descriptorIndex);
+    fields.push({
+      accessFlags,
+      accessFlagsFormatted: formatMemberAccessFlags(accessFlags),
+      nameIndex,
+      descriptorIndex,
+      name,
+      descriptor,
+      attributes,
+    });
   }
 
   // 7. Methods
   const methodsCount = reader.readU2();
+  const methods: MethodInfo[] = [];
   for (let i = 0; i < methodsCount; i++) {
-    reader.skip(2); // access_flags
-    reader.skip(2); // name_index
-    reader.skip(2); // descriptor_index
+    const accessFlags = reader.readU2();
+    const nameIndex = reader.readU2();
+    const descriptorIndex = reader.readU2();
     const attributesCount = reader.readU2();
+    const attributes: AttributeInfo[] = [];
     for (let a = 0; a < attributesCount; a++) {
-      reader.skip(2); // attribute_name_index
+      const attributeNameIndex = reader.readU2();
       const attrLength = reader.readU4();
-      reader.skip(attrLength);
+      const data = reader.readBytes(attrLength);
+      const name = resolveUtf8(constantPool, attributeNameIndex);
+      attributes.push({ attributeNameIndex, name, data });
     }
+    const name = resolveUtf8(constantPool, nameIndex);
+    const descriptor = resolveUtf8(constantPool, descriptorIndex);
+    const methodObj: MethodInfo = {
+      accessFlags,
+      accessFlagsFormatted: formatMemberAccessFlags(accessFlags),
+      nameIndex,
+      descriptorIndex,
+      name,
+      descriptor,
+      attributes,
+    };
+    // Eagerly parse Code attribute if available
+    try {
+      const parsedCode = parseMethodCodeAttribute(methodObj, constantPool);
+      if (parsedCode) {
+        methodObj.code = parsedCode;
+      }
+    } catch (codeErr: unknown) {
+      // Keep methodObj even if code parsing encounters unexpected attribute data
+      console.warn(`Failed to parse Code for method ${name}:`, codeErr);
+    }
+    methods.push(methodObj);
   }
 
   // 8. Class Attributes
   const attributesCount = reader.readU2();
+  const attributes: AttributeInfo[] = [];
   for (let a = 0; a < attributesCount; a++) {
-    reader.skip(2); // attribute_name_index
+    const attributeNameIndex = reader.readU2();
     const attrLength = reader.readU4();
-    reader.skip(attrLength);
+    const data = reader.readBytes(attrLength);
+    const name = resolveUtf8(constantPool, attributeNameIndex);
+    attributes.push({ attributeNameIndex, name, data });
   }
 
   const parsedBytes = reader.getOffset();
@@ -365,14 +432,20 @@ export function parseClassFile(buffer: ArrayBuffer): ClassFileInfo {
     resolvedConstantPool,
     accessFlags,
     accessFlagsFormatted: formatAccessFlags(accessFlags),
+    thisClassIndex,
+    superClassIndex,
     internalClassName,
     className,
     internalSuperClassName,
     superClassName,
     interfacesCount,
+    interfaces,
     fieldsCount,
+    fields,
     methodsCount,
+    methods,
     attributesCount,
+    attributes,
     byteLength,
     parsedBytes,
     remainingBytes,

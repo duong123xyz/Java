@@ -8,10 +8,12 @@ import {
   Layers,
   Binary,
   Terminal,
+  Code2,
 } from 'lucide-react';
 import { JarEntryInfo, ClassFileInfo } from '../../types/jar';
 import { parseClassFile } from '../../services/classFileParser';
 import { ConstantPoolViewer } from './ConstantPoolViewer';
+import { BytecodeViewer } from './BytecodeViewer';
 
 interface ClassInspectorProps {
   entry: JarEntryInfo;
@@ -29,7 +31,7 @@ export const ClassInspector: React.FC<ClassInspectorProps> = ({
   );
   const [isLoading, setIsLoading] = useState<boolean>(!classCache?.has(entry.path));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'summary' | 'constant_pool'>('summary');
+  const [activeSubTab, setActiveSubTab] = useState<'summary' | 'constant_pool' | 'bytecode'>('summary');
 
   useEffect(() => {
     // If cached, use it immediately
@@ -149,6 +151,23 @@ export const ClassInspector: React.FC<ClassInspectorProps> = ({
               {classInfo.constantPoolCount.toLocaleString()}
             </span>
           </button>
+
+          <button
+            id="subtab-bytecode"
+            type="button"
+            onClick={() => setActiveSubTab('bytecode')}
+            className={`px-3 py-1.5 rounded-md text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer ${
+              activeSubTab === 'bytecode'
+                ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+            }`}
+          >
+            <Code2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Bytecode &amp; &lt;clinit&gt;</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-900 text-emerald-300 border border-zinc-800">
+              {classInfo.methodsCount} methods
+            </span>
+          </button>
         </div>
 
         <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 px-2 py-0.5 rounded">
@@ -158,7 +177,7 @@ export const ClassInspector: React.FC<ClassInspectorProps> = ({
       </div>
 
       {/* Tab 1: Summary View (Preserved from Step 04) */}
-      {activeSubTab === 'summary' ? (
+      {activeSubTab === 'summary' && (
         <div className="space-y-4">
           {/* Java Class Header Overview */}
           <div className="border border-blue-900/50 bg-blue-950/20 rounded-lg p-4 space-y-3">
@@ -337,12 +356,19 @@ export const ClassInspector: React.FC<ClassInspectorProps> = ({
             </div>
           </div>
         </div>
-      ) : (
-        /* Tab 2: Constant Pool Viewer */
+      )}
+
+      {/* Tab 2: Constant Pool Viewer */}
+      {activeSubTab === 'constant_pool' && (
         <ConstantPoolViewer
           entries={classInfo.resolvedConstantPool}
           className={classInfo.className}
         />
+      )}
+
+      {/* Tab 3: Bytecode & <clinit> Static Analyzer */}
+      {activeSubTab === 'bytecode' && (
+        <BytecodeViewer classInfo={classInfo} />
       )}
     </div>
   );

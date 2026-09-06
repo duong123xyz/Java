@@ -54,8 +54,9 @@ export async function loadAndAnalyzeJarSession(file: File): Promise<LoadedJarSes
     throw new Error('Chỉ chấp nhận file có phần mở rộng .jar');
   }
 
-  // Load zip in browser memory
-  const zip = await JSZip.loadAsync(file);
+  // Load zip in browser memory using standard ArrayBuffer
+  const arrayBuffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(arrayBuffer);
 
   let totalEntries = 0;
   let classEntries = 0;
@@ -86,11 +87,20 @@ export async function loadAndAnalyzeJarSession(file: File): Promise<LoadedJarSes
     const pathParts = relativePath.split('/').filter(Boolean);
     const name = pathParts.length > 0 ? pathParts[pathParts.length - 1] : relativePath;
 
+    // Extract uncompressed size directly from entry data (preserves exact size)
+    const uncompressedSize =
+      typeof (zipEntry as any)._data?.uncompressedSize === 'number'
+        ? (zipEntry as any)._data.uncompressedSize
+        : typeof (zipEntry as any)._data?.compressedSize === 'number'
+        ? (zipEntry as any)._data.compressedSize
+        : 0;
+
     entries.push({
       path: relativePath,
       name: isDir ? `${name}/` : name,
       type: entryType,
       directory: isDir,
+      size: uncompressedSize,
       zipEntry,
     });
   });

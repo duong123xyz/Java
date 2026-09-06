@@ -4,11 +4,21 @@ export class BinaryReader {
   private readonly length: number;
   private readonly buffer: ArrayBuffer;
 
-  constructor(buffer: ArrayBuffer, offset = 0, length = buffer.byteLength) {
-    this.buffer = buffer;
+  constructor(input: ArrayBuffer | Uint8Array, offset = 0, length?: number) {
+    if (input instanceof Uint8Array) {
+      // Create independent ArrayBuffer slice from Uint8Array
+      const ab = input.buffer.slice(
+        input.byteOffset,
+        input.byteOffset + input.byteLength
+      );
+      this.buffer = ab;
+      this.length = length !== undefined ? length : ab.byteLength;
+    } else {
+      this.buffer = input;
+      this.length = length !== undefined ? length : input.byteLength;
+    }
     this.offset = offset;
-    this.length = length;
-    this.view = new DataView(buffer, 0, length);
+    this.view = new DataView(this.buffer, 0, this.length);
   }
 
   public getOffset(): number {

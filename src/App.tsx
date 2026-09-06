@@ -1,17 +1,29 @@
 import React, { useState } from 'react';
-import { Terminal, XCircle, FileArchive, LayoutDashboard, Compass } from 'lucide-react';
+import {
+  Terminal,
+  XCircle,
+  FileArchive,
+  LayoutDashboard,
+  Compass,
+  Package,
+  AlertTriangle,
+} from 'lucide-react';
 import { LoadedJarSession } from './types/jar';
 import { loadAndAnalyzeJarSession } from './services/jarService';
 import { JarDropZone } from './components/JarDropZone';
 import { JarInfoPanel } from './components/JarInfoPanel';
 import { ManifestPanel } from './components/ManifestPanel';
 import { JarExplorer } from './components/explorer/JarExplorer';
+import { ItemsBrowser } from './components/items/ItemsBrowser';
+import { getDirtyCount, discardAllDrafts } from './services/itemDraftService';
 
 export default function App() {
   const [session, setSession] = useState<LoadedJarSession | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'explorer'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'explorer' | 'items'>('overview');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [dirtyItemCount, setDirtyItemCount] = useState(0);
+  const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
 
   const handleFileSelect = async (file: File) => {
     setIsLoading(true);
@@ -21,6 +33,7 @@ export default function App() {
       const loadedSession = await loadAndAnalyzeJarSession(file);
       setSession(loadedSession);
       setActiveTab('overview');
+      setDirtyItemCount(0);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error loading JAR';
       setErrorMessage(message);
@@ -31,11 +44,24 @@ export default function App() {
   };
 
   const handleCloseJar = () => {
-    // Clear reference and reset UI to dropzone screen
+    const dirty = getDirtyCount(session?.itemDrafts);
+    if (dirty > 0) {
+      setShowCloseConfirmModal(true);
+      return;
+    }
+    forceCloseJar();
+  };
+
+  const forceCloseJar = () => {
+    if (session?.itemDrafts) {
+      discardAllDrafts(session.itemDrafts);
+    }
     setSession(null);
     setActiveTab('overview');
     setErrorMessage(null);
     setIsLoading(false);
+    setDirtyItemCount(0);
+    setShowCloseConfirmModal(false);
   };
 
   return (
@@ -133,6 +159,31 @@ export default function App() {
                     {session.entries.length.toLocaleString()}
                   </span>
                 </button>
+
+                <button
+                  id="tab-items"
+                  type="button"
+                  onClick={() => setActiveTab('items')}
+                  className={`px-3.5 py-1.5 rounded-md text-xs font-mono flex items-center gap-2 transition-colors cursor-pointer ${
+                    activeTab === 'items'
+                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                  }`}
+                >
+                  <Package className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Items</span>
+                  {dirtyItemCount > 0 ? (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold animate-pulse">
+                      {dirtyItemCount} modified
+                    </span>
+                  ) : (
+                    session.itemAnalysis && (
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-950 text-amber-400 border border-zinc-800">
+                        {session.itemAnalysis.items.length.toLocaleString()}
+                      </span>
+                    )
+                  )}
+                </button>
               </div>
 
               <div className="flex items-center gap-3 text-xs font-mono text-zinc-400">
@@ -156,16 +207,59 @@ export default function App() {
                 <JarInfoPanel jarInfo={session.jarInfo} />
                 <ManifestPanel manifest={session.jarInfo.manifest} />
               </div>
-            ) : (
+            ) : activeTab === 'explorer' ? (
               <JarExplorer session={session} />
+            ) : (
+              <ItemsBrowser
+                session={session}
+                onDraftsUpdated={(count) => setDirtyItemCount(count)}
+              />
             )}
           </div>
         )}
       </main>
 
+      {/* Confirmation Modal when Closing JAR with Unsaved In-Memory Changes */}
+      {showCloseConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-start gap-3 text-amber-400">
+              <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-100">
+                  There are unsaved in-memory changes.
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  Bạn đang có <strong className="text-amber-400 font-mono">{dirtyItemCount} item</strong> đã chỉnh sửa trong bộ nhớ RAM. Đóng file JAR sẽ hủy bỏ vĩnh viễn toàn bộ các thay đổi nháp này.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800 font-mono">
+              <button
+                type="button"
+                onClick={() => setShowCloseConfirmModal(false)}
+                className="px-3.5 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 border border-zinc-700 cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={forceCloseJar}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-800 cursor-pointer transition-colors"
+              >
+                Discard Changes &amp; Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer / Status bar */}
       <footer className="border-t border-zinc-800/60 bg-zinc-950 py-2.5 px-4 text-center text-[11px] font-mono text-zinc-500">
-        NRO Studio &bull; Step 05 &bull; Constant Pool Inspector &bull; Client-side in-memory parser
+        NRO Studio &bull; Step 08 &bull; In-Memory Item Editor Draft &bull; Client-side in-memory parser
       </footer>
     </div>
   );

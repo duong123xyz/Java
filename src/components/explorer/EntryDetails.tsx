@@ -95,6 +95,7 @@ export const EntryDetails: React.FC<EntryDetailsProps> = ({
         {/* Class binary inspector */}
         {entry.type === 'class' ? (
           <ClassInspector
+            key={entry.path}
             entry={entry}
             classCache={classCache}
             onCacheUpdate={onCacheUpdate}

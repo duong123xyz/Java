@@ -91,8 +91,16 @@ export const JarExplorer: React.FC<JarExplorerProps> = ({ session }) => {
           <div className="flex items-center justify-between px-1 pb-2 text-[11px] font-mono text-zinc-500 uppercase font-semibold tracking-wider">
             <span>Inspector</span>
             {selectedEntry && (
-              <span className="text-zinc-400 font-normal lowercase truncate max-w-[200px]">
-                {selectedEntry.name}
+              <span
+                className="text-zinc-300 font-mono font-normal truncate max-w-[280px]"
+                title={selectedEntry.path}
+              >
+                {selectedEntry.path}
+                {typeof selectedEntry.size === 'number' && selectedEntry.size > 0 && (
+                  <span className="text-zinc-500 ml-1.5">
+                    ({selectedEntry.size.toLocaleString()} bytes)
+                  </span>
+                )}
               </span>
             )}
           </div>

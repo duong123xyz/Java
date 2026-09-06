@@ -101,14 +101,19 @@ export const EntryList: React.FC<EntryListProps> = ({
             >
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {renderIcon(entry.type)}
-                <span className="truncate" title={entry.path}>
+                <span className="truncate font-mono select-none" title={entry.path}>
                   {entry.path}
                 </span>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
+                {typeof entry.size === 'number' && entry.size > 0 && (
+                  <span className="text-[11px] font-mono text-zinc-400 tabular-nums">
+                    {entry.size.toLocaleString()} bytes
+                  </span>
+                )}
                 <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono uppercase ${
                     entry.type === 'class'
                       ? 'text-blue-400 bg-blue-950/50 border border-blue-900/40'
                       : entry.type === 'png'
