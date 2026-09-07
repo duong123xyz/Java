@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+nro-users.sqlite
+nro-users.sqlite-shm
+nro-users.sqlite-wal

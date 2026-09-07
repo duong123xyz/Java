@@ -43,6 +43,8 @@ type LastJarPayload = {
  * as a CheerpJ execution context.
  */
 export class DefaultJ2meTestSession implements J2meTestSession {
+  private readonly resetMode: 'none' | 'rms' | 'full';
+
   private status: EmulatorRuntimeStatus = 'IDLE';
   private logs: EmulatorLogEntry[] = [];
   private logListeners = new Set<(entry: EmulatorLogEntry) => void>();
@@ -68,7 +70,8 @@ export class DefaultJ2meTestSession implements J2meTestSession {
   private currentScreenSize: EmulatorScreenSize = '240x320';
   private soundEnabled = true;
 
-  constructor() {
+  constructor(options: { resetMode?: 'none' | 'rms' | 'full' } = {}) {
+    this.resetMode = options.resetMode ?? 'rms';
     this.setupMessageBridge();
   }
 
@@ -183,7 +186,7 @@ export class DefaultJ2meTestSession implements J2meTestSession {
   private ensurePopoutRunner(): Window | null {
     if (this.runnerWindow && !this.runnerWindow.closed) return this.runnerWindow;
 
-    const url = `/emulator/index.html?standalone=1&cj=stable&reset=rms&run=bootstrap-${Date.now()}`;
+    const url = `/emulator/index.html?standalone=1&cj=stable&reset=${this.resetMode}&run=bootstrap-${Date.now()}`;
 
     // Opening a normal tab is more reliable than requesting a popup window from
     // inside Google AI Studio's sandboxed Preview iframe.
@@ -233,7 +236,7 @@ export class DefaultJ2meTestSession implements J2meTestSession {
     });
     this.addLog('info', `Fresh JVM required (${reason}). Reloading standalone runner: ${runId}`);
 
-    const url = `/emulator/index.html?standalone=1&cj=stable&reset=rms&run=${encodeURIComponent(runId)}&t=${Date.now()}`;
+    const url = `/emulator/index.html?standalone=1&cj=stable&reset=${this.resetMode}&run=${encodeURIComponent(runId)}&t=${Date.now()}`;
     try {
       // location.replace tears down the old CheerpJ page/JVM without leaving another
       // history entry. The matching runId handshake will resend lastJar automatically.

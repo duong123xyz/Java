@@ -51,13 +51,6 @@ import {
   getSkillDraftFingerprint,
   serializeSkillDraftValues,
 } from './skillDataService';
-import {
-  getDirtyPartDraftEntries,
-  getPartDraftFingerprint,
-  loadPartSnapshot,
-  PART_SCHEMA,
-  serializePartDraftValues,
-} from './partDataService';
 import { parseClassFile } from './classFileParser';
 import { getPatchWorkspaceFingerprint } from './patchWorkspaceStateService';
 
@@ -77,7 +70,7 @@ export interface DraftTestProgress {
 }
 
 export interface DraftTestBlocker {
-  area: 'Vật phẩm' | 'NPC' | 'Map' | 'Quái' | 'Kỹ năng' | 'Ngoại hình' | 'Boss' | 'Cơ chế' | 'Nhân vật' | 'Hệ thống';
+  area: 'Vật phẩm' | 'NPC' | 'Map' | 'Quái' | 'Kỹ năng' | 'Boss' | 'Cơ chế' | 'Nhân vật' | 'Hệ thống';
   count: number;
   message: string;
 }
@@ -88,7 +81,6 @@ export interface DraftTestSummary {
   mapDrafts: number;
   mobDrafts: number;
   skillDrafts: number;
-  partDrafts: number;
   bossDrafts: number;
   mechanicDrafts: number;
   characterDrafts: number;
@@ -138,7 +130,6 @@ function createSummary(): DraftTestSummary {
     mapDrafts: 0,
     mobDrafts: 0,
     skillDrafts: 0,
-    partDrafts: 0,
     bossDrafts: 0,
     mechanicDrafts: 0,
     characterDrafts: 0,
@@ -558,7 +549,6 @@ export function getDraftStateFingerprint(session: LoadedJarSession): string {
     map: getMapDraftFingerprint(session),
     mobs: getMobDraftFingerprint(session),
     skills: getSkillDraftFingerprint(session),
-    parts: getPartDraftFingerprint(session),
     boss: getBossDraftFingerprint(session),
     character: getCharacterDraftFingerprint(session),
     mechanics: getGameMechanicsDraft(session),
@@ -882,73 +872,6 @@ export async function buildDraftTestCandidate(
     }
 
 
-    // 6) Ngoại hình / Part Data — 14 bảng F..S, mỗi row [id,type,frames].
-    // Chỉ sửa cột frames; Part ID/type và số lượng frame bị khóa ở panel.
-    const partSnapshot = await loadPartSnapshot(session);
-    const dirtyParts = getDirtyPartDraftEntries(session, partSnapshot.parts);
-    summary.partDrafts = dirtyParts.length;
-
-    if (dirtyParts.length > 0) {
-      const dirtyByClass = new Map<
-        string,
-        typeof dirtyParts
-      >();
-
-      for (const entry of dirtyParts) {
-        const list = dirtyByClass.get(entry.part.sourceClass) ?? [];
-        list.push(entry);
-        dirtyByClass.set(entry.part.sourceClass, list);
-      }
-
-      for (const table of partSnapshot.tables) {
-        const dirtyInClass = dirtyByClass.get(table.sourceClass) ?? [];
-        if (dirtyInClass.length === 0) continue;
-
-        const allRows: StringTableRow[] = table.rows.map((row) => ({
-          rowIndex: row.rowIndex,
-          values: [...row.values],
-          cellEvidences: row.cellEvidences,
-          evidence: {
-            instructionOffsets: row.evidence?.instructionOffsets ?? [],
-            summary:
-              row.evidence?.summary ??
-              `${table.sourceClass}.u[row ${row.rowIndex}]`,
-          },
-        }));
-
-        const rowByIndex = new Map(
-          allRows.map((row) => [row.rowIndex, row])
-        );
-
-        const changes: GenericTableChange[] = dirtyInClass.map(
-          ({ part, draft }) => ({
-            row: rowByIndex.get(part.sourceRow)!,
-            nextValues: serializePartDraftValues(part, draft),
-          })
-        );
-
-        const built = await buildGenericTablePlans(
-          session,
-          table.sourceClass,
-          table.sourceField,
-          [...PART_SCHEMA],
-          allRows,
-          changes,
-          'Ngoại hình'
-        );
-        blockers.push(...built.blockers);
-
-        if (built.plans.length > 0) {
-          jobs.push({
-            sourceClass: table.sourceClass,
-            schemaColumns: [...PART_SCHEMA],
-            group: makeGroup(table.sourceClass, built.plans),
-            label: 'Ngoại hình',
-          });
-        }
-      }
-    }
-
     progress('PLANNING', 'Đang dựng writer Cơ chế và kiểm tra nháp...', 2, 5);
 
     const mechanicDraft = getGameMechanicsDraft(session);
@@ -1005,7 +928,6 @@ export async function buildDraftTestCandidate(
       summary.mapDrafts +
       summary.mobDrafts +
       summary.skillDrafts +
-      summary.partDrafts +
       mechanicsResult.appliedDraftCount +
       characterResult.appliedDraftCount;
     summary.unsupportedDrafts =

@@ -25,6 +25,7 @@ import { isDraftTestCandidateFresh } from '../../services/draftTestService';
 interface TestGameTabProps {
   session: LoadedJarSession;
   initialSource?: EmulatorSourceType;
+  resetMode?: 'none' | 'rms' | 'full';
   onNavigateToPatchBuilder?: () => void;
   onBuildDraftCandidate?: () => Promise<CandidateOutputJar | null>;
 }
@@ -42,6 +43,7 @@ function shortHash(buffer: ArrayBuffer): Promise<string> {
 export function TestGameTab({
   session,
   initialSource = 'ORIGINAL',
+  resetMode = 'rms',
   onNavigateToPatchBuilder,
   onBuildDraftCandidate,
 }: TestGameTabProps) {
@@ -111,7 +113,7 @@ export function TestGameTab({
   }, [source, patchedAvailable, initialSource]);
 
   useEffect(() => {
-    const sess = new DefaultJ2meTestSession();
+    const sess = new DefaultJ2meTestSession({ resetMode });
     testSessionRef.current = sess;
 
     const offLog = sess.onLog((entry) => {
@@ -125,7 +127,7 @@ export function TestGameTab({
       sess.dispose();
       testSessionRef.current = null;
     };
-  }, []);
+  }, [resetMode]);
 
   useEffect(() => {
     if (testSessionRef.current && iframeRef.current) {
@@ -186,6 +188,13 @@ export function TestGameTab({
 
     setIsRebuildingDraft(true);
     setIsStarting(true);
+    // Giữ candidate đã verify gần nhất để người dùng vẫn có thể mở game khi
+    // một draft mới bị writer chặn. Tuyệt đối không giả vờ rằng bản cũ chứa
+    // thay đổi mới: log và banner vẫn báo rõ đây là candidate gần nhất.
+    const lastValidated =
+      session.candidateOutput?.status === 'VALIDATED'
+        ? session.candidateOutput
+        : null;
     try {
       sess.addLog(
         'info',
@@ -194,10 +203,19 @@ export function TestGameTab({
 
       const rebuilt = await onBuildDraftCandidate();
       if (!rebuilt || rebuilt.status !== 'VALIDATED') {
-        sess.addLog(
-          'error',
-          '[Source: DRAFT] Không dựng được candidate VALIDATED. Xem cảnh báo Test nháp để biết draft nào còn thiếu writer.'
-        );
+        if (lastValidated) {
+          sess.addLog(
+            'warn',
+            '[Source: DRAFT] Bản mới bị writer chặn. Đang chạy candidate VALIDATED gần nhất để mở game; các thay đổi vừa sửa chưa nằm trong bản này.'
+          );
+          setSource('PATCHED');
+          await runCandidateJar(lastValidated);
+        } else {
+          sess.addLog(
+            'error',
+            '[Source: DRAFT] Không dựng được candidate VALIDATED và chưa có bản đã verify để chạy. Xem cảnh báo Test Workspace để biết field bị chặn.'
+          );
+        }
         return;
       }
 
@@ -218,6 +236,7 @@ export function TestGameTab({
     isStarting,
     onBuildDraftCandidate,
     runCandidateJar,
+    session,
   ]);
 
   const loadActiveJar = useCallback(async () => {

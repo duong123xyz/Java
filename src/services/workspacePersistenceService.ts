@@ -216,8 +216,7 @@ function sourceMatches(
   const current = sourceIdentity(session);
   return (
     current.fileName === source.fileName &&
-    current.fileSize === source.fileSize &&
-    current.lastModified === source.lastModified
+    current.fileSize === source.fileSize
   );
 }
 
@@ -306,7 +305,7 @@ export async function saveWorkspaceDrafts(
 export function queueWorkspaceDraftSave(
   session: LoadedJarSession,
   counts: WorkspaceDirtyCounts,
-  delayMs = 350
+  delayMs = 50
 ): void {
   pendingDraftSave = { session, counts: cloneCounts(counts) };
 

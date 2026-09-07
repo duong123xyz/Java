@@ -19,7 +19,6 @@ import {
   CheckCircle2,
   Sparkles,
   Network,
-  Shirt,
 } from 'lucide-react';
 import { LoadedJarSession } from './types/jar';
 import { loadAndAnalyzeJarSession } from './services/jarService';
@@ -36,19 +35,15 @@ import { MapPanel } from './components/map/MapPanel';
 import { MobPanel } from './components/mobs/MobPanel';
 import { CharacterPanel } from './components/character/CharacterPanel';
 import { SkillPanel } from './components/skills/SkillPanel';
-import { AppearancePanel } from './components/appearance/AppearancePanel';
 import { MultiplayerPanel } from './components/multiplayer/MultiplayerPanel';
 import { PatchWorkspaceBar } from './components/workspace/PatchWorkspaceBar';
-import { getDirtyCount, discardAllDrafts } from './services/itemDraftService';
+import { getDirtyCount } from './services/itemDraftService';
 import {
   DraftTestBuildResult,
   DraftTestProgress,
 } from './services/draftTestService';
 import { buildUnifiedWorkspaceCandidate } from './services/unifiedCandidateService';
-import {
-  clearPatchWorkspace,
-  getPatchWorkspaceOperationCount,
-} from './services/patchWorkspaceStateService';
+import { getPatchWorkspaceOperationCount } from './services/patchWorkspaceStateService';
 import {
   clearPersistedWorkspace,
   flushWorkspaceDraftSave,
@@ -277,7 +272,7 @@ const LIGHT_THEME_CSS = `
 
 export default function App() {
   const [session, setSession] = useState<LoadedJarSession | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'game-data' | 'maps' | 'mobs' | 'characters' | 'skills' | 'appearance' | 'bosses' | 'mechanics' | 'multiplayer' | 'explorer' | 'items' | 'test'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'game-data' | 'maps' | 'mobs' | 'characters' | 'skills' | 'bosses' | 'mechanics' | 'multiplayer' | 'explorer' | 'items' | 'test'>('overview');
   const [testGameSource, setTestGameSource] = useState<'ORIGINAL' | 'PATCHED'>('ORIGINAL');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -289,7 +284,6 @@ export default function App() {
   const [dirtyMobCount, setDirtyMobCount] = useState(0);
   const [dirtyCharacterCount, setDirtyCharacterCount] = useState(0);
   const [dirtySkillCount, setDirtySkillCount] = useState(0);
-  const [dirtyPartCount, setDirtyPartCount] = useState(0);
   const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
   const [isBuildingDraftTest, setIsBuildingDraftTest] = useState(false);
   const [draftTestProgress, setDraftTestProgress] = useState<DraftTestProgress | null>(null);
@@ -309,7 +303,7 @@ export default function App() {
     bosses: patch.bosses ?? dirtyBossCount,
     mechanics: patch.mechanics ?? dirtyMechanicCount,
     skills: patch.skills ?? dirtySkillCount,
-    parts: patch.parts ?? dirtyPartCount,
+    parts: 0,
   });
 
   const persistDraftChange = (
@@ -349,7 +343,6 @@ export default function App() {
         setDirtyBossCount(restored.counts.bosses);
         setDirtyMechanicCount(restored.counts.mechanics);
         setDirtySkillCount(restored.counts.skills);
-        setDirtyPartCount(restored.counts.parts);
         setWorkspaceStatus('restored');
         setErrorMessage(null);
       } catch (error) {
@@ -377,9 +370,11 @@ export default function App() {
     };
 
     window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
@@ -391,31 +386,38 @@ export default function App() {
 
     try {
       const loadedSession = await loadAndAnalyzeJarSession(file);
-      await clearPersistedWorkspace().catch(() => undefined);
+      // Nếu người dùng chọn lại đúng JAR đang làm, nhập lại toàn bộ draft thay
+      // vì ghi một snapshot rỗng đè lên workspace cũ.
+      const restored = await restoreWorkspaceDrafts(loadedSession);
+      if (!restored.restored) {
+        await clearPersistedWorkspace().catch(() => undefined);
+      }
       await saveWorkspaceSource(loadedSession);
-      await saveWorkspaceDrafts(loadedSession, {
-        items: 0,
-        npcs: 0,
-        maps: 0,
-        mobs: 0,
-        characters: 0,
-        bosses: 0,
-        mechanics: 0,
-        skills: 0,
-        parts: 0,
-      });
+      const restoredCounts = restored.restored
+        ? restored.counts
+        : {
+            items: 0,
+            npcs: 0,
+            maps: 0,
+            mobs: 0,
+            characters: 0,
+            bosses: 0,
+            mechanics: 0,
+            skills: 0,
+            parts: 0,
+          };
+      await saveWorkspaceDrafts(loadedSession, restoredCounts);
       setWorkspaceStatus('saved');
       setSession(loadedSession);
       setActiveTab('overview');
-      setDirtyItemCount(0);
-      setDirtyNpcCount(0);
-      setDirtyMechanicCount(0);
-      setDirtyBossCount(0);
-      setDirtyMapCount(0);
-      setDirtyMobCount(0);
-      setDirtyCharacterCount(0);
-      setDirtySkillCount(0);
-      setDirtyPartCount(0);
+      setDirtyItemCount(restoredCounts.items);
+      setDirtyNpcCount(restoredCounts.npcs);
+      setDirtyMechanicCount(restoredCounts.mechanics);
+      setDirtyBossCount(restoredCounts.bosses);
+      setDirtyMapCount(restoredCounts.maps);
+      setDirtyMobCount(restoredCounts.mobs);
+      setDirtyCharacterCount(restoredCounts.characters);
+      setDirtySkillCount(restoredCounts.skills);
       setDraftTestProgress(null);
       setDraftTestResult(null);
     } catch (err: unknown) {
@@ -439,7 +441,6 @@ export default function App() {
       dirtyMobCount > 0 ||
       dirtyCharacterCount > 0 ||
       dirtySkillCount > 0 ||
-      dirtyPartCount > 0 ||
       dirtyMechanicCount > 0 ||
       dirtyBossCount > 0
     ) {
@@ -449,13 +450,10 @@ export default function App() {
     forceCloseJar();
   };
 
-  // Đóng JAR và dọn toàn bộ trạng thái tạm trong bộ nhớ.
+  // Chỉ đóng JAR khỏi giao diện. Source + draft đã autosave vẫn được giữ để
+  // F5/mở lại ứng dụng có thể khôi phục đúng workspace gần nhất.
   const forceCloseJar = () => {
-    void clearPersistedWorkspace().catch(() => undefined);
-    if (session?.itemDrafts) {
-      discardAllDrafts(session.itemDrafts);
-    }
-    if (session) clearPatchWorkspace(session);
+    void flushWorkspaceDraftSave().catch(() => undefined);
     setSession(null);
     setActiveTab('overview');
     setErrorMessage(null);
@@ -468,7 +466,6 @@ export default function App() {
     setDirtyMobCount(0);
     setDirtyCharacterCount(0);
     setDirtySkillCount(0);
-    setDirtyPartCount(0);
     setDraftTestProgress(null);
     setDraftTestResult(null);
     setIsBuildingDraftTest(false);
@@ -488,7 +485,6 @@ export default function App() {
     dirtyMobCount +
     dirtyCharacterCount +
     dirtySkillCount +
-    dirtyPartCount +
     dirtyBossCount +
     dirtyMechanicCount +
     workspaceOperationCount;
@@ -711,25 +707,6 @@ export default function App() {
 
 
                 <button
-                  id="tab-appearance"
-                  type="button"
-                  onClick={() => setActiveTab('appearance')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'appearance'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Shirt className="w-3.5 h-3.5 text-pink-500" />
-                  <span>Ngoại hình</span>
-                  {dirtyPartCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-pink-500/20 text-pink-700 border border-pink-300 font-bold animate-pulse">
-                      {dirtyPartCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
                   id="tab-mobs"
                   type="button"
                   onClick={() => setActiveTab('mobs')}
@@ -928,7 +905,7 @@ export default function App() {
 
             {/* Nội dung từng tab */}
             <div className={`min-h-0 flex-1 ${
-              activeTab === 'bosses' || activeTab === 'maps' || activeTab === 'mobs' || activeTab === 'characters' || activeTab === 'skills' || activeTab === 'appearance' || activeTab === 'multiplayer'
+              activeTab === 'bosses' || activeTab === 'maps' || activeTab === 'mobs' || activeTab === 'characters' || activeTab === 'skills' || activeTab === 'multiplayer'
                 ? 'overflow-hidden'
                 : 'overflow-auto'
             }`}>
@@ -979,14 +956,6 @@ export default function App() {
                 onDraftsUpdated={(count) => {
                   setDirtySkillCount(count);
                   persistDraftChange({ skills: count });
-                }}
-              />
-            ) : activeTab === 'appearance' ? (
-              <AppearancePanel
-                session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtyPartCount(count);
-                  persistDraftChange({ parts: count });
                 }}
               />
             ) : activeTab === 'bosses' ? (
@@ -1138,12 +1107,6 @@ export default function App() {
                   </div>
                 </div>
                 <div className="p-2 rounded-lg bg-zinc-50 border border-zinc-200">
-                  <div className="text-zinc-500">Ngoại hình</div>
-                  <div className="text-base font-bold text-pink-600">
-                    {draftTestResult.summary.partDrafts}
-                  </div>
-                </div>
-                <div className="p-2 rounded-lg bg-zinc-50 border border-zinc-200">
                   <div className="text-zinc-500">NPC / Item</div>
                   <div className="text-base font-bold text-violet-600">
                     {draftTestResult.summary.npcDrafts + draftTestResult.summary.itemDrafts}
@@ -1174,7 +1137,7 @@ export default function App() {
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-zinc-100">Có thay đổi chưa được lưu.</h3>
+                <h3 className="text-sm font-bold text-zinc-100">Workspace đã được tự động lưu</h3>
                 <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
                   Bạn đang có{' '}
                   <strong className="text-amber-400 font-mono">{dirtyItemCount}</strong> vật phẩm và{' '}
@@ -1182,10 +1145,9 @@ export default function App() {
                   <strong className="text-blue-400 font-mono">{dirtyMapCount}</strong> map,{' '}
                   <strong className="text-indigo-400 font-mono">{dirtyCharacterCount}</strong> nhân vật,{' '}
                   <strong className="text-fuchsia-500 font-mono">{dirtySkillCount}</strong> kỹ năng,{' '}
-                  <strong className="text-pink-500 font-mono">{dirtyPartCount}</strong> ngoại hình,{' '}
                   <strong className="text-rose-400 font-mono">{dirtyBossCount}</strong> boss và{' '}
-                  <strong className="text-violet-400 font-mono">{dirtyMechanicCount}</strong> cơ chế có nháp trong RAM.
-                  Nếu đóng file JAR, toàn bộ thay đổi nháp này sẽ bị hủy.
+                  <strong className="text-violet-400 font-mono">{dirtyMechanicCount}</strong> cơ chế đang được lưu trong workspace.
+                  Đóng JAR chỉ ẩn phiên hiện tại; F5 hoặc mở lại web sẽ tự khôi phục các thay đổi này.
                 </p>
               </div>
             </div>
@@ -1203,7 +1165,7 @@ export default function App() {
                 onClick={forceCloseJar}
                 className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-800 cursor-pointer transition-colors"
               >
-                Hủy thay đổi và đóng JAR
+                Đóng JAR (vẫn lưu nháp)
               </button>
             </div>
           </div>

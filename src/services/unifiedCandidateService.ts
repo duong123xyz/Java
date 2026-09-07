@@ -26,7 +26,6 @@ function emptySummary(): DraftTestSummary {
     mapDrafts: 0,
     mobDrafts: 0,
     skillDrafts: 0,
-    partDrafts: 0,
     bossDrafts: 0,
     mechanicDrafts: 0,
     characterDrafts: 0,
