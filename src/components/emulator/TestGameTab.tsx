@@ -25,7 +25,6 @@ import { isDraftTestCandidateFresh } from '../../services/draftTestService';
 interface TestGameTabProps {
   session: LoadedJarSession;
   initialSource?: EmulatorSourceType;
-  resetMode?: 'none' | 'rms' | 'full';
   onNavigateToPatchBuilder?: () => void;
   onBuildDraftCandidate?: () => Promise<CandidateOutputJar | null>;
 }
@@ -43,7 +42,6 @@ function shortHash(buffer: ArrayBuffer): Promise<string> {
 export function TestGameTab({
   session,
   initialSource = 'ORIGINAL',
-  resetMode = 'rms',
   onNavigateToPatchBuilder,
   onBuildDraftCandidate,
 }: TestGameTabProps) {
@@ -113,7 +111,7 @@ export function TestGameTab({
   }, [source, patchedAvailable, initialSource]);
 
   useEffect(() => {
-    const sess = new DefaultJ2meTestSession({ resetMode });
+    const sess = new DefaultJ2meTestSession();
     testSessionRef.current = sess;
 
     const offLog = sess.onLog((entry) => {
@@ -127,7 +125,7 @@ export function TestGameTab({
       sess.dispose();
       testSessionRef.current = null;
     };
-  }, [resetMode]);
+  }, []);
 
   useEffect(() => {
     if (testSessionRef.current && iframeRef.current) {

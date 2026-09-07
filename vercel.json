@@ -1,8 +1,0 @@
-{
-  "rewrites": [
-    {
-      "source": "/((?!api/|assets/|emulator/|game/).*)",
-      "destination": "/index.html"
-    }
-  ]
-}
