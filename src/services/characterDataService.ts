@@ -1,5 +1,6 @@
 import { LoadedJarSession } from '../types/jar';
 import { getSessionClassInfo } from './patchPlannerService';
+import { inspectCharacterStarterClass } from './characterBytecodeService';
 
 export type CharacterPlanet = 0 | 1 | 2;
 
@@ -184,6 +185,10 @@ const SAVE_FIELDS: CharacterFieldInfo[] = [
 ];
 
 const draftStore = new WeakMap<LoadedJarSession, Map<CharacterPlanet, CharacterDraft>>();
+const baselineStore = new WeakMap<
+  LoadedJarSession,
+  Map<CharacterPlanet, CharacterStarterProfile>
+>();
 
 function numericInstructionValue(instruction: any, constantPool: any[]): number | null {
   if (typeof instruction?.pushValue === 'number') return instruction.pushValue;
@@ -230,36 +235,56 @@ function methodHasRequiredConstants(method: any, constantPool: any[]): boolean {
 export async function analyzeCharacterDefaults(
   session: LoadedJarSession
 ): Promise<CharacterAnalysisSnapshot> {
-  const [characterClass, saveClass] = await Promise.all([
-    getSessionClassInfo(session, 'a/a/H'),
+  const [saveClass, hBytes] = await Promise.all([
     getSessionClassInfo(session, 'a/a/N'),
+    session.zip.file('a/a/H.class')?.async('arraybuffer') ??
+      Promise.resolve<ArrayBuffer | null>(null),
   ]);
-
-  const initMethod = characterClass?.methods.find(
-    (method: any) => method.name === 'p' && method.descriptor === '(B)V'
-  );
 
   const saveReader = saveClass?.methods.find(
     (method: any) =>
       method.name === 'a' &&
       method.descriptor === '([BI)La/a/H;'
   );
-
-  const initVerified =
-    Boolean(characterClass && initMethod?.code?.instructions) &&
-    methodHasRequiredConstants(initMethod, characterClass?.constantPool ?? []);
-
   const saveVerified = Boolean(saveReader?.code?.instructions);
 
+  const inspection = hBytes
+    ? inspectCharacterStarterClass(hBytes)
+    : {
+        verified: false,
+        detail: 'Không tìm thấy a/a/H.class.',
+        profiles: [] as any[],
+        methodCodeLength: 0,
+        constantPoolCount: 0,
+      };
+
+  const profiles = PROFILE_DEFAULTS.map((fallback, index) => ({
+    ...fallback,
+    ...(inspection.verified ? inspection.profiles[index] : {}),
+  }));
+
+  baselineStore.set(
+    session,
+    new Map(
+      profiles.map(
+        (profile) => [profile.planet, { ...profile }] as const
+      )
+    )
+  );
+
   return {
-    profiles: PROFILE_DEFAULTS.map((profile) => ({ ...profile })),
-    verified: initVerified && saveVerified,
+    profiles,
+    verified: inspection.verified && saveVerified,
     sourceClass: 'a/a/H',
     sourceMethod: 'p(B)',
     verificationDetail:
-      initVerified && saveVerified
-        ? 'Đã xác minh H.p(byte) và reader save a/a/N.a(byte[], int).'
-        : 'Cấu trúc class khác dự kiến; chỉ nên xem, chưa dùng writer tự động.',
+      inspection.verified && saveVerified
+        ? `${inspection.detail} Save reader a/a/N.a(byte[], int) cũng đã xác minh.`
+        : `${inspection.detail}${
+            saveVerified
+              ? ''
+              : ' Không xác minh được save reader a/a/N.a(byte[], int).'
+          }`,
     structure: { ...STRUCTURE },
     saveFields: SAVE_FIELDS.map((field) => ({ ...field })),
   };
@@ -276,6 +301,35 @@ function getStore(session: LoadedJarSession): Map<CharacterPlanet, CharacterDraf
     draftStore.set(session, store);
   }
   return store;
+}
+
+function getBaselineProfiles(
+  session: LoadedJarSession
+): Map<CharacterPlanet, CharacterStarterProfile> {
+  return (
+    baselineStore.get(session) ??
+    new Map(
+      PROFILE_DEFAULTS.map(
+        (profile) => [profile.planet, profile] as const
+      )
+    )
+  );
+}
+
+function ensureDraft(
+  session: LoadedJarSession,
+  planet: CharacterPlanet
+): CharacterDraft {
+  const store = getStore(session);
+  const existing = store.get(planet);
+  if (existing) return { ...existing };
+
+  const baseline =
+    getBaselineProfiles(session).get(planet) ??
+    PROFILE_DEFAULTS[planet];
+  const draft = { ...baseline };
+  store.set(planet, draft);
+  return { ...draft };
 }
 
 export function getCharacterDraft(
@@ -302,7 +356,9 @@ export function setCharacterDraft(
   draft: CharacterDraft
 ): void {
   const store = getStore(session);
-  store.set(profile.planet, {
+  const current = ensureDraft(session, profile.planet);
+
+  const normalized: CharacterDraft = {
     ...draft,
     planet: profile.planet,
     planetName: profile.planetName,
@@ -324,8 +380,88 @@ export function setCharacterDraft(
     skillPoints: cleanNumber(draft.skillPoints, 0, 2_100_000_000),
     stamina: cleanNumber(draft.stamina, 0, 2_100_000_000),
     maxStamina: cleanNumber(draft.maxStamina, 1, 2_100_000_000),
-    selectedSkill: cleanNumber(draft.selectedSkill, -1, 10000),
-  });
+    selectedSkill: cleanNumber(draft.selectedSkill, -1, 2_100_000_000),
+  };
+
+  store.set(profile.planet, normalized);
+
+  const changed = <K extends keyof CharacterDraft>(key: K) =>
+    current[key] !== normalized[key];
+
+  // H.p(byte) dùng chung các producer này cho cả 3 hành tinh.
+  const globalFields: Array<keyof CharacterDraft> = [
+    'spawnX',
+    'spawnY',
+    'gold',
+    'gems',
+    'ruby',
+    'power',
+    'potential',
+    'baseArmor',
+    'baseCritical',
+    'speed',
+    'level',
+    'skillPoints',
+  ];
+
+  for (const field of globalFields) {
+    if (!changed(field)) continue;
+    for (const planet of [0, 1, 2] as const) {
+      const target = ensureDraft(session, planet);
+      (target as any)[field] = (normalized as any)[field];
+      store.set(planet, target);
+    }
+  }
+
+  // Map mặc định là base + planet, nên giữ ba map liên tiếp.
+  if (changed('mapId')) {
+    const baseMap = normalized.mapId - profile.planet;
+    for (const planet of [0, 1, 2] as const) {
+      const target = ensureDraft(session, planet);
+      target.mapId = cleanNumber(baseMap + planet, 0, 10000);
+      store.set(planet, target);
+    }
+  }
+
+  // HP: Earth có producer riêng, Namek/Xayda dùng chung.
+  if (changed('baseHp') && profile.planet !== 0) {
+    for (const planet of [1, 2] as const) {
+      const target = ensureDraft(session, planet);
+      target.baseHp = normalized.baseHp;
+      store.set(planet, target);
+    }
+  }
+
+  // KI: Namek có producer riêng, Earth/Xayda dùng chung.
+  if (changed('baseKi') && profile.planet !== 1) {
+    for (const planet of [0, 2] as const) {
+      const target = ensureDraft(session, planet);
+      target.baseKi = normalized.baseKi;
+      store.set(planet, target);
+    }
+  }
+
+  // Damage: Xayda có producer riêng, Earth/Namek dùng chung.
+  if (changed('baseDamage') && profile.planet !== 2) {
+    for (const planet of [0, 1] as const) {
+      const target = ensureDraft(session, planet);
+      target.baseDamage = normalized.baseDamage;
+      store.set(planet, target);
+    }
+  }
+
+  // H.p(byte) dùng một push + dup_x1 cho cả yg/yh.
+  if (changed('stamina') || changed('maxStamina')) {
+    const value = changed('maxStamina')
+      ? normalized.maxStamina
+      : normalized.stamina;
+    for (const planet of [0, 1, 2] as const) {
+      const target = ensureDraft(session, planet);
+      target.stamina = value;
+      target.maxStamina = value;
+      store.set(planet, target);
+    }
+  }
 }
 
 export function isCharacterDraftDirty(
@@ -352,10 +488,8 @@ export function resetCharacterDraft(
   session: LoadedJarSession,
   profile: CharacterStarterProfile
 ): CharacterDraft {
-  const store = getStore(session);
-  const draft = cloneDraft(profile);
-  store.set(profile.planet, draft);
-  return { ...draft };
+  setCharacterDraft(session, profile, cloneDraft(profile));
+  return getCharacterDraft(session, profile);
 }
 
 export function exportCharacterDrafts(
@@ -363,7 +497,10 @@ export function exportCharacterDrafts(
 ): Array<[CharacterPlanet, CharacterDraft]> {
   const store = draftStore.get(session);
   if (!store) return [];
-  return Array.from(store.entries()).map(([planet, draft]) => [planet, { ...draft }]);
+  return Array.from(store.entries()).map(([planet, draft]) => [
+    planet,
+    { ...draft },
+  ]);
 }
 
 export function importCharacterDrafts(
@@ -377,18 +514,19 @@ export function importCharacterDrafts(
   draftStore.set(session, store);
 }
 
-export function getCharacterDraftFingerprint(session: LoadedJarSession): string {
+export function getCharacterDraftFingerprint(
+  session: LoadedJarSession
+): string {
   const store = draftStore.get(session);
   if (!store) return '[]';
 
-  const byPlanet = new Map(
-    PROFILE_DEFAULTS.map((profile) => [profile.planet, profile] as const)
-  );
-
+  const baseline = getBaselineProfiles(session);
   const rows = Array.from(store.entries())
     .filter(([planet, draft]) => {
-      const profile = byPlanet.get(planet);
-      return Boolean(profile && isCharacterDraftDirty(profile, draft));
+      const profile = baseline.get(planet);
+      return Boolean(
+        profile && isCharacterDraftDirty(profile, draft)
+      );
     })
     .sort(([a], [b]) => a - b)
     .map(([planet, draft]) => [planet, draft]);

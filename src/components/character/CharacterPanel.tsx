@@ -134,6 +134,7 @@ export function CharacterPanel({
               <StatChip text="3 hành tinh" />
               <StatChip text="Sprite preview" />
               <StatChip text="H.p(byte)" />
+              <StatChip text="Source-backed" />
               <StatChip text="Save a/a/N" />
               {dirtyCount > 0 && (
                 <span className="px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-600 text-[10px] font-mono">
@@ -156,7 +157,7 @@ export function CharacterPanel({
             <AlertTriangle className="w-3.5 h-3.5" />
           )}
           <span className="hidden 2xl:inline">
-            {snapshot.verified ? 'Đã xác minh player/save' : 'Cần kiểm tra cấu trúc'}
+            {snapshot.verified ? 'Source-backed + writer READY' : 'Cần kiểm tra cấu trúc'}
           </span>
         </div>
       </div>
@@ -463,10 +464,11 @@ function StarterEditor({
             </div>
           </EditorSection>
 
-          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-3 text-[11px] text-indigo-700 leading-relaxed">
-            <Info className="w-4 h-4 inline mr-1.5 align-[-2px]" />
-            Panel này đang chỉnh <strong>bộ khởi tạo nhân vật mới</strong> trong <code>a/a/H.p(byte)</code>.
-            Sprite hiển thị là preview trực quan theo mẫu part trong game để nhìn panel đỡ khô hơn và dễ chọn hành tinh hơn.
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-700 leading-relaxed">
+            <CheckCircle2 className="w-4 h-4 inline mr-1.5 align-[-2px]" />
+            Các giá trị trên được <strong>đọc trực tiếp từ bytecode H.p(byte)</strong> và đã có writer cho Test Workspace.
+            Những producer dùng chung trong game (vàng/ngọc/power/X/Y..., HP Namek-Xayda, KI Earth-Xayda, damage Earth-Namek)
+            sẽ tự đồng bộ đúng phạm vi khi sửa. Map giữ công thức <code>baseMap + planet</code>; thể lực và thể lực max dùng chung một producer.
           </div>
         </div>
       </section>

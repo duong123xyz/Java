@@ -36,6 +36,11 @@ import {
   importPartDrafts,
   PartDraft,
 } from './partDataService';
+import {
+  exportPatchWorkspaceOperations,
+  importPatchWorkspaceOperations,
+  PatchWorkspaceOperation,
+} from './patchWorkspaceStateService';
 
 const DB_NAME = 'nro-studio-workspace';
 const DB_VERSION = 1;
@@ -83,6 +88,7 @@ interface PersistedDraftSnapshot {
   mechanicsDraft: GameMechanicsDraft;
   skillDrafts: Array<[number, SkillDraft]>;
   partDrafts: Array<[number, PartDraft]>;
+  patchWorkspaceOperations: PatchWorkspaceOperation[];
   counts: WorkspaceDirtyCounts;
   savedAt: number;
 }
@@ -284,6 +290,7 @@ function buildDraftSnapshot(
     mechanicsDraft: exportGameMechanicsDraft(session),
     skillDrafts: exportSkillDrafts(session),
     partDrafts: exportPartDrafts(session),
+    patchWorkspaceOperations: exportPatchWorkspaceOperations(session),
     counts: cloneCounts(counts),
     savedAt: Date.now(),
   };
@@ -357,6 +364,10 @@ export async function restoreWorkspaceDrafts(
   importGameMechanicsDraft(session, snapshot.mechanicsDraft);
   importSkillDrafts(session, snapshot.skillDrafts ?? []);
   importPartDrafts(session, snapshot.partDrafts ?? []);
+  importPatchWorkspaceOperations(
+    session,
+    snapshot.patchWorkspaceOperations ?? []
+  );
 
   // candidateOutput cố ý không restore: JAR test phải build lại từ draft hiện tại.
   session.candidateOutput = undefined;

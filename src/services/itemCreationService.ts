@@ -696,7 +696,8 @@ function outputFileName(name: string): string {
 
 export async function buildNewItemCandidate(
   session: LoadedJarSession,
-  rawInput: NewItemRowInput
+  rawInput: NewItemRowInput,
+  baseBlob?: Blob
 ): Promise<CandidateOutputJar> {
   const input = validateNewItemInput(rawInput);
 
@@ -709,8 +710,10 @@ export async function buildNewItemCandidate(
     );
   }
 
-  const originalFileBytes = await session.originalFile.arrayBuffer();
-  const zip = await JSZip.loadAsync(originalFileBytes.slice(0));
+  const baseBytes = baseBlob
+    ? await baseBlob.arrayBuffer()
+    : await session.originalFile.arrayBuffer();
+  const zip = await JSZip.loadAsync(baseBytes.slice(0));
   const classPath = `${input.sourceClass}.class`;
   const entry = zip.file(classPath);
 

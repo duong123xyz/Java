@@ -28,14 +28,14 @@ import {
 } from './mapDataService';
 import {
   analyzeMobs,
-  getDirtyMobCount,
+  getDirtyMobDraftEntries,
+  getMobDraftFingerprint,
+  serializeMobDraftValues,
 } from './mobDataService';
 import {
-  analyzeCharacterDefaults,
-  getCharacterDraft,
   getCharacterDraftFingerprint,
-  getDirtyCharacterCount,
 } from './characterDataService';
+import { buildCharacterPatches } from './characterPatchService';
 import {
   getBossDraftFingerprint,
   getDirtyBossCount,
@@ -59,6 +59,7 @@ import {
   serializePartDraftValues,
 } from './partDataService';
 import { parseClassFile } from './classFileParser';
+import { getPatchWorkspaceFingerprint } from './patchWorkspaceStateService';
 
 export type DraftTestPhase =
   | 'COLLECTING'
@@ -516,17 +517,6 @@ async function collectUnsupportedDrafts(
 ): Promise<DraftTestBlocker[]> {
   const blockers: DraftTestBlocker[] = [];
 
-  const mobSnapshot = await analyzeMobs(session);
-  summary.mobDrafts = getDirtyMobCount(session, mobSnapshot.mobs);
-  if (summary.mobDrafts > 0) {
-    blockers.push({
-      area: 'Quái',
-      count: summary.mobDrafts,
-      message:
-        'Quái đã có nháp ở panel a/a/a/A nhưng writer cho Test nháp chưa được nối. Tool chặn để tránh bạn tưởng rằng bản test đã áp dụng chỉ số quái.',
-    });
-  }
-
   summary.bossDrafts = getDirtyBossCount(session);
   if (summary.bossDrafts > 0) {
     blockers.push({
@@ -534,20 +524,6 @@ async function collectUnsupportedDrafts(
       count: summary.bossDrafts,
       message:
         'Boss hiện có nháp nhưng writer numeric/runtime chưa hoàn thiện. Test nháp sẽ không âm thầm bỏ qua thay đổi Boss.',
-    });
-  }
-
-  const characterSnapshot = await analyzeCharacterDefaults(session);
-  summary.characterDrafts = getDirtyCharacterCount(
-    session,
-    characterSnapshot.profiles
-  );
-  if (summary.characterDrafts > 0) {
-    blockers.push({
-      area: 'Nhân vật',
-      count: summary.characterDrafts,
-      message:
-        'Nhân vật khởi tạo nằm trong H.p(byte), cần numeric bytecode writer riêng; chưa đưa vào Test nháp để tránh chạy sai.',
     });
   }
 
@@ -580,11 +556,13 @@ export function getDraftStateFingerprint(session: LoadedJarSession): string {
     items: stableItemDraftFingerprint(session),
     npc: stableNpcDraftFingerprint(session),
     map: getMapDraftFingerprint(session),
+    mobs: getMobDraftFingerprint(session),
     skills: getSkillDraftFingerprint(session),
     parts: getPartDraftFingerprint(session),
     boss: getBossDraftFingerprint(session),
     character: getCharacterDraftFingerprint(session),
     mechanics: getGameMechanicsDraft(session),
+    workspace: getPatchWorkspaceFingerprint(session),
   });
 }
 
@@ -593,7 +571,7 @@ export function isDraftTestCandidateFresh(session: LoadedJarSession): boolean {
   if (
     !candidate ||
     candidate.status !== 'VALIDATED' ||
-    candidate.metrics?.source !== 'DRAFT_TEST'
+    !['DRAFT_TEST', 'UNIFIED_WORKSPACE'].includes(candidate.metrics?.source)
   ) {
     return false;
   }
@@ -795,7 +773,72 @@ export async function buildDraftTestCandidate(
     }
 
 
-    // 4) Kỹ năng — static String[][] a/a/a/W. Cột skills chứa array JSON đã escape.
+    // 4) Quái — static String[][] a/a/a/A.
+    // Schema: id, TYPE, NAME, hp, range_move, speed, dart_Type, percent_dame, percent_tiem_nang.
+    // ID / TYPE vẫn giữ nguyên trong serializeMobDraftValues; panel chỉ sửa template stats/name.
+    const mobSnapshot = await analyzeMobs(session);
+    const dirtyMobs = getDirtyMobDraftEntries(session, mobSnapshot.mobs);
+    summary.mobDrafts = dirtyMobs.length;
+
+    if (dirtyMobs.length > 0) {
+      // Dùng toàn bộ rows của bảng để tính sharing Constant Pool chính xác.
+      const allRows: StringTableRow[] = mobSnapshot.rows.map((row) => ({
+        rowIndex: row.rowIndex,
+        values: [...row.values],
+        cellEvidences: row.cellEvidences,
+        evidence: {
+          instructionOffsets: row.evidence?.instructionOffsets ?? [],
+          summary:
+            row.evidence?.summary ??
+            `${mobSnapshot.sourceClass}.${mobSnapshot.sourceField}[row ${row.rowIndex}]`,
+        },
+      }));
+
+      const rowByIndex = new Map(
+        allRows.map((row) => [row.rowIndex, row])
+      );
+
+      const changes: GenericTableChange[] = [];
+      for (const { mob, draft } of dirtyMobs) {
+        const row = rowByIndex.get(mob.rowIndex);
+        if (!row) {
+          blockers.push({
+            area: 'Quái',
+            count: 1,
+            message: `Không tìm thấy source row của Mob #${mob.id} tại ${mobSnapshot.sourceClass}.${mobSnapshot.sourceField}[${mob.rowIndex}].`,
+          });
+          continue;
+        }
+
+        changes.push({
+          row,
+          nextValues: serializeMobDraftValues(mob, draft),
+        });
+      }
+
+      const built = await buildGenericTablePlans(
+        session,
+        mobSnapshot.sourceClass,
+        mobSnapshot.sourceField,
+        mobSnapshot.schema,
+        allRows,
+        changes,
+        'Quái'
+      );
+      blockers.push(...built.blockers);
+
+      if (built.plans.length > 0) {
+        jobs.push({
+          sourceClass: mobSnapshot.sourceClass,
+          schemaColumns: mobSnapshot.schema,
+          group: makeGroup(mobSnapshot.sourceClass, built.plans),
+          label: 'Quái',
+        });
+      }
+    }
+
+
+    // 5) Kỹ năng — static String[][] a/a/a/W. Cột skills chứa array JSON đã escape.
     const skillSnapshot = await analyzeSkills(session);
     const dirtySkills = getDirtySkillDraftEntries(session, skillSnapshot.skills);
     summary.skillDrafts = dirtySkills.length;
@@ -839,7 +882,7 @@ export async function buildDraftTestCandidate(
     }
 
 
-    // 5) Ngoại hình / Part Data — 14 bảng F..S, mỗi row [id,type,frames].
+    // 6) Ngoại hình / Part Data — 14 bảng F..S, mỗi row [id,type,frames].
     // Chỉ sửa cột frames; Part ID/type và số lượng frame bị khóa ở panel.
     const partSnapshot = await loadPartSnapshot(session);
     const dirtyParts = getDirtyPartDraftEntries(session, partSnapshot.parts);
@@ -930,6 +973,27 @@ export async function buildDraftTestCandidate(
       });
     }
 
+    const characterResult = await buildCharacterPatches(session);
+    summary.characterDrafts = characterResult.appliedDraftCount;
+
+    if (characterResult.status === 'FAILED') {
+      blockers.push({
+        area: 'Nhân vật',
+        count: Math.max(1, summary.characterDrafts),
+        message:
+          characterResult.errorMessage ??
+          'Character writer thất bại khi rewrite H.p(byte).',
+      });
+    }
+
+    for (const blocker of characterResult.blockers) {
+      blockers.push({
+        area: 'Nhân vật',
+        count: 1,
+        message: `${blocker.field}: ${blocker.message}`,
+      });
+    }
+
     blockers.push(...(await collectUnsupportedDrafts(session, summary)));
 
     const merged = mergeJobs(jobs);
@@ -939,13 +1003,13 @@ export async function buildDraftTestCandidate(
       summary.itemDrafts +
       summary.npcDrafts +
       summary.mapDrafts +
+      summary.mobDrafts +
       summary.skillDrafts +
       summary.partDrafts +
-      mechanicsResult.appliedDraftCount;
+      mechanicsResult.appliedDraftCount +
+      characterResult.appliedDraftCount;
     summary.unsupportedDrafts =
-      summary.mobDrafts +
       summary.bossDrafts +
-      summary.characterDrafts +
       mechanicsResult.unsupportedDraftCount;
 
     if (
@@ -970,7 +1034,8 @@ export async function buildDraftTestCandidate(
     const rewriteJobs = merged.jobs;
     if (
       rewriteJobs.length === 0 &&
-      mechanicsResult.rewrittenClasses.size === 0
+      mechanicsResult.rewrittenClasses.size === 0 &&
+      characterResult.rewrittenClasses.size === 0
     ) {
       return {
         status: 'NO_CHANGES',
@@ -982,7 +1047,9 @@ export async function buildDraftTestCandidate(
     progress(
       'REWRITING',
       `Đang rewrite ${
-        rewriteJobs.length + mechanicsResult.rewrittenClasses.size
+        rewriteJobs.length +
+        mechanicsResult.rewrittenClasses.size +
+        characterResult.rewrittenClasses.size
       } class trong RAM...`,
       3,
       5
@@ -995,6 +1062,21 @@ export async function buildDraftTestCandidate(
       rewritten.set(normalizeClassEntryPath(path), bytes);
     }
     totalCells += mechanicsResult.appliedPatchCount;
+
+    for (const [path, bytes] of characterResult.rewrittenClasses) {
+      const normalizedPath = normalizeClassEntryPath(path);
+      if (rewritten.has(normalizedPath)) {
+        return {
+          status: 'FAILED',
+          blockers: [],
+          summary,
+          errorMessage:
+            `Xung đột writer: ${normalizedPath} vừa được Cơ chế vừa được Nhân vật sửa trong cùng lượt test.`,
+        };
+      }
+      rewritten.set(normalizedPath, bytes);
+    }
+    totalCells += characterResult.appliedPatchCount;
 
     for (const job of rewriteJobs) {
       const result = await rewriteJob(session, job);
@@ -1016,7 +1098,7 @@ export async function buildDraftTestCandidate(
           blockers: [],
           summary,
           errorMessage:
-            `Xung đột writer: ${classPath} vừa được Cơ chế vừa được table writer sửa trong cùng lượt test.`,
+            `Xung đột writer: ${classPath} vừa được writer đặc thù vừa được table writer sửa trong cùng lượt test.`,
         };
       }
 

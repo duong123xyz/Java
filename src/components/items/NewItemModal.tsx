@@ -14,10 +14,13 @@ import {
 } from '../../types/item';
 import { SmallImagePreview } from '../game-data/SmallImagePreview';
 import { NpcBodyPreview } from '../game-data/NpcBodyPreview';
+import { ITEM_CREATE_SCHEMA } from '../../services/itemCreationService';
 import {
-  buildNewItemCandidate,
-  ITEM_CREATE_SCHEMA,
-} from '../../services/itemCreationService';
+  getQueuedNewItemIds,
+  isNewItemIdQueued,
+  queueNewItemOperation,
+} from '../../services/patchWorkspaceStateService';
+import { buildUnifiedWorkspaceCandidate } from '../../services/unifiedCandidateService';
 
 interface NewItemModalProps {
   session: LoadedJarSession;
@@ -25,6 +28,7 @@ interface NewItemModalProps {
   selectedItem: ItemRecord | null;
   onClose: () => void;
   onBuilt: (candidate: CandidateOutputJar) => void;
+  onWorkspaceUpdated?: () => void;
 }
 
 const LABELS = [
@@ -45,17 +49,22 @@ const LABELS = [
   'Leg',
 ] as const;
 
-function nextGlobalItemId(analysisData: ItemAnalysisSessionData): string {
-  const ids = analysisData.items
-    .map((item) => Number(item.id))
-    .filter((value) => Number.isInteger(value) && value >= 0);
+function nextGlobalItemId(
+  analysisData: ItemAnalysisSessionData,
+  session: LoadedJarSession
+): string {
+  const ids = [
+    ...analysisData.items.map((item) => Number(item.id)),
+    ...getQueuedNewItemIds(session).map((id) => Number(id)),
+  ].filter((value) => Number.isInteger(value) && value >= 0);
 
   return String((ids.length ? Math.max(...ids) : -1) + 1);
 }
 
 function defaultValues(
   analysisData: ItemAnalysisSessionData,
-  selectedItem: ItemRecord | null
+  selectedItem: ItemRecord | null,
+  session: LoadedJarSession
 ): string[] {
   const values = selectedItem
     ? [...selectedItem.rawValues]
@@ -64,7 +73,7 @@ function defaultValues(
   while (values.length < ITEM_CREATE_SCHEMA.length) values.push('');
   values.length = ITEM_CREATE_SCHEMA.length;
 
-  values[0] = nextGlobalItemId(analysisData);
+  values[0] = nextGlobalItemId(analysisData, session);
 
   if (selectedItem) {
     values[3] = `${selectedItem.name || 'Item'} mới`;
@@ -94,6 +103,7 @@ export function NewItemModal({
   selectedItem,
   onClose,
   onBuilt,
+  onWorkspaceUpdated,
 }: NewItemModalProps) {
   const [sourceClass, setSourceClass] = useState(
     selectedItem?.sourceClass ??
@@ -101,7 +111,7 @@ export function NewItemModal({
       'a/a/a/i'
   );
   const [values, setValues] = useState<string[]>(() =>
-    defaultValues(analysisData, selectedItem)
+    defaultValues(analysisData, selectedItem, session)
   );
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,8 +125,10 @@ export function NewItemModal({
   );
 
   const duplicateId = useMemo(
-    () => analysisData.items.some((item) => item.id === values[0]),
-    [analysisData.items, values]
+    () =>
+      analysisData.items.some((item) => item.id === values[0]) ||
+      isNewItemIdQueued(session, values[0]),
+    [analysisData.items, session, values]
   );
 
   const iconId = Number(values[6]);
@@ -142,14 +154,23 @@ export function NewItemModal({
   const build = async () => {
     setError(null);
     setBuilding(true);
-
     try {
-      const candidate = await buildNewItemCandidate(session, {
+      const operation = queueNewItemOperation(session, {
         sourceClass,
         values,
       });
-      session.candidateOutput = candidate;
-      onBuilt(candidate);
+      onWorkspaceUpdated?.();
+
+      const result = await buildUnifiedWorkspaceCandidate(session);
+      if (result.status !== 'VALIDATED' || !result.candidate) {
+        const detail = result.blockers.length
+          ? result.blockers.map((blocker) => `${blocker.area}: ${blocker.message}`).join('\n')
+          : result.errorMessage || `Unified Workspace trả trạng thái ${result.status}.`;
+        throw new Error(`${detail}\n\nItem mới vẫn được giữ trong Patch Workspace; có thể bỏ bằng nút × trên thanh Workspace.`);
+      }
+
+      session.candidateOutput = result.candidate;
+      onBuilt(result.candidate);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -170,7 +191,7 @@ export function NewItemModal({
                 Tạo Item Template mới
               </div>
               <div className="text-[10px] text-zinc-500">
-                Row-insertion writer thật: tăng String[][] thêm 1 row trong bảng item đã chọn.
+                Item mới được đưa vào Patch Workspace rồi dựng chung với mọi nháp / Multiplayer hiện có.
               </div>
             </div>
           </div>
@@ -302,8 +323,8 @@ export function NewItemModal({
 
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] text-amber-800 leading-relaxed">
                 <AlertTriangle className="w-3.5 h-3.5 inline mr-1.5 align-[-2px]" />
-                Writer này <strong>thêm đúng 1 row</strong> vào bảng nguồn đã chọn.
-                Nó không tự thêm item vào shop/drop/quest. Sau khi tạo template xong,
+                Writer vẫn <strong>thêm đúng 1 row</strong> vào bảng nguồn đã chọn, nhưng không còn build từ JAR gốc riêng lẻ.
+                Operation được hợp nhất với toàn bộ thay đổi hiện tại. Item vẫn chưa tự vào shop/drop/quest;
                 phần Shop/Drop sẽ tham chiếu Item ID này ở các panel content tiếp theo.
               </div>
 
@@ -382,8 +403,8 @@ export function NewItemModal({
                 <PackagePlus className="w-4 h-4" />
               )}
               {building
-                ? 'Đang chèn row & verify...'
-                : 'Tạo JAR có Item mới'}
+                ? 'Đang hợp nhất & verify...'
+                : 'Thêm vào Workspace & dựng JAR'}
             </button>
           </div>
         </div>

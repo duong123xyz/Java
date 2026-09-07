@@ -16,14 +16,16 @@ import {
 import { CandidateOutputJar, LoadedJarSession } from '../../types/jar';
 import {
   auditMultiplayerCompatibility,
-  buildMultiplayerCandidate,
   MultiplayerCompatibilityAudit,
   MultiplayerLiteConfig,
 } from '../../services/multiplayerPatchService';
+import { setMultiplayerWorkspaceOperation } from '../../services/patchWorkspaceStateService';
+import { buildUnifiedWorkspaceCandidate } from '../../services/unifiedCandidateService';
 
 interface MultiplayerPanelProps {
   session: LoadedJarSession;
   onCandidateBuilt?: (candidate: CandidateOutputJar) => void;
+  onWorkspaceUpdated?: () => void;
 }
 
 interface ServerPlayer {
@@ -74,6 +76,7 @@ function loadStoredConfig(): MultiplayerLiteConfig {
 export function MultiplayerPanel({
   session,
   onCandidateBuilt,
+  onWorkspaceUpdated,
 }: MultiplayerPanelProps) {
   const [config, setConfig] = useState<MultiplayerLiteConfig>(() => loadStoredConfig());
   const [adminPort, setAdminPort] = useState(14446);
@@ -182,10 +185,20 @@ export function MultiplayerPanel({
 
     try {
       saveConfig();
-      const output = await buildMultiplayerCandidate(session, config);
-      session.candidateOutput = output;
-      setCandidate(output);
-      onCandidateBuilt?.(output);
+      setMultiplayerWorkspaceOperation(session, config);
+      onWorkspaceUpdated?.();
+
+      const result = await buildUnifiedWorkspaceCandidate(session);
+      if (result.status !== 'VALIDATED' || !result.candidate) {
+        const detail = result.blockers.length
+          ? result.blockers.map((blocker) => `${blocker.area}: ${blocker.message}`).join('\n')
+          : result.errorMessage || `Unified Workspace trả trạng thái ${result.status}.`;
+        throw new Error(detail);
+      }
+
+      session.candidateOutput = result.candidate;
+      setCandidate(result.candidate);
+      onCandidateBuilt?.(result.candidate);
     } catch (error) {
       setBuildError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -353,9 +366,9 @@ export function MultiplayerPanel({
             <div className="px-4 py-3 border-b border-zinc-200 bg-zinc-50 flex items-center gap-2">
               <Wifi className="w-4 h-4 text-violet-600" />
               <div>
-                <div className="text-sm font-bold text-zinc-900">Build JAR Multiplayer</div>
+                <div className="text-sm font-bold text-zinc-900">Build JAR hợp nhất + Multiplayer</div>
                 <div className="text-[10px] text-zinc-500">
-                  Chèn class client + multiplayer.cfg và hook đúng 1 call site trong a/ai.paint.
+                  Multiplayer được ghi thành operation và áp cuối cùng lên JAR đã chứa Item / nháp / Cơ chế hiện tại.
                 </div>
               </div>
             </div>
@@ -368,7 +381,7 @@ export function MultiplayerPanel({
                 className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-[12px] font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
                 {building ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-                {building ? 'Đang build & verify...' : 'Tạo JAR Multiplayer & mở Chạy thử'}
+                {building ? 'Đang hợp nhất & verify...' : 'Đưa Multiplayer vào Workspace & chạy thử'}
               </button>
 
               {buildError && (

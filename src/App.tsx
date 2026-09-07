@@ -38,12 +38,17 @@ import { CharacterPanel } from './components/character/CharacterPanel';
 import { SkillPanel } from './components/skills/SkillPanel';
 import { AppearancePanel } from './components/appearance/AppearancePanel';
 import { MultiplayerPanel } from './components/multiplayer/MultiplayerPanel';
+import { PatchWorkspaceBar } from './components/workspace/PatchWorkspaceBar';
 import { getDirtyCount, discardAllDrafts } from './services/itemDraftService';
 import {
-  buildDraftTestCandidate,
   DraftTestBuildResult,
   DraftTestProgress,
 } from './services/draftTestService';
+import { buildUnifiedWorkspaceCandidate } from './services/unifiedCandidateService';
+import {
+  clearPatchWorkspace,
+  getPatchWorkspaceOperationCount,
+} from './services/patchWorkspaceStateService';
 import {
   clearPersistedWorkspace,
   flushWorkspaceDraftSave,
@@ -291,6 +296,7 @@ export default function App() {
   const [draftTestResult, setDraftTestResult] = useState<DraftTestBuildResult | null>(null);
   const [isRestoringWorkspace, setIsRestoringWorkspace] = useState(true);
   const [workspaceStatus, setWorkspaceStatus] = useState<'idle' | 'saved' | 'restored' | 'error'>('idle');
+  const [, setPatchWorkspaceRevision] = useState(0);
 
   const currentWorkspaceCounts = (
     patch: Partial<WorkspaceDirtyCounts> = {}
@@ -312,6 +318,11 @@ export default function App() {
     if (!session) return;
     queueWorkspaceDraftSave(session, currentWorkspaceCounts(patch));
     setWorkspaceStatus('saved');
+  };
+
+  const handlePatchWorkspaceUpdated = () => {
+    setPatchWorkspaceRevision((value) => value + 1);
+    persistDraftChange();
   };
 
   useEffect(() => {
@@ -419,8 +430,10 @@ export default function App() {
   // Nếu còn bản nháp trong RAM thì yêu cầu xác nhận trước khi đóng JAR.
   const handleCloseJar = () => {
     const dirtyItems = getDirtyCount(session?.itemDrafts);
+    const workspaceOperations = session ? getPatchWorkspaceOperationCount(session) : 0;
     if (
       dirtyItems > 0 ||
+      workspaceOperations > 0 ||
       dirtyNpcCount > 0 ||
       dirtyMapCount > 0 ||
       dirtyMobCount > 0 ||
@@ -442,6 +455,7 @@ export default function App() {
     if (session?.itemDrafts) {
       discardAllDrafts(session.itemDrafts);
     }
+    if (session) clearPatchWorkspace(session);
     setSession(null);
     setActiveTab('overview');
     setErrorMessage(null);
@@ -459,8 +473,13 @@ export default function App() {
     setDraftTestResult(null);
     setIsBuildingDraftTest(false);
     setWorkspaceStatus('idle');
+    setPatchWorkspaceRevision((value) => value + 1);
     setShowCloseConfirmModal(false);
   };
+
+  const workspaceOperationCount = session
+    ? getPatchWorkspaceOperationCount(session)
+    : 0;
 
   const totalDirtyDrafts =
     dirtyItemCount +
@@ -471,7 +490,8 @@ export default function App() {
     dirtySkillCount +
     dirtyPartCount +
     dirtyBossCount +
-    dirtyMechanicCount;
+    dirtyMechanicCount +
+    workspaceOperationCount;
 
   const handleTestDraft = async (
     navigateToTest = true
@@ -489,7 +509,7 @@ export default function App() {
 
     try {
       await flushWorkspaceDraftSave().catch(() => undefined);
-      const result = await buildDraftTestCandidate(session, setDraftTestProgress);
+      const result = await buildUnifiedWorkspaceCandidate(session, setDraftTestProgress);
       setDraftTestResult(result);
 
       if (result.status === 'VALIDATED' && result.candidate) {
@@ -821,7 +841,9 @@ export default function App() {
                   <Network className="w-3.5 h-3.5 text-cyan-500" />
                   <span>Multiplayer</span>
                   {session.candidateOutput?.status === 'VALIDATED' &&
-                    session.candidateOutput?.metrics?.source === 'MULTIPLAYER_LITE' && (
+                    (session.candidateOutput?.metrics?.source === 'MULTIPLAYER_LITE' ||
+                      (session.candidateOutput?.metrics?.source === 'UNIFIED_WORKSPACE' &&
+                        session.candidateOutput?.metrics?.multiplayerLite)) && (
                       <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-100 text-cyan-700 border border-cyan-200 font-bold">
                         Ready
                       </span>
@@ -838,8 +860,8 @@ export default function App() {
                   className="px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer bg-violet-500/10 border border-violet-500/30 text-violet-600 hover:bg-violet-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
                   title={
                     totalDirtyDrafts === 0
-                      ? 'Chưa có nháp để test'
-                      : 'Dựng JAR tạm trong RAM rồi chuyển thẳng sang Chạy thử'
+                      ? 'Chưa có nháp / operation để test'
+                      : 'Hợp nhất toàn bộ nháp + Item mới + Multiplayer thành một JAR test'
                   }
                 >
                   {isBuildingDraftTest ? (
@@ -850,11 +872,16 @@ export default function App() {
                   <span>
                     {isBuildingDraftTest
                       ? draftTestProgress?.label || 'Đang dựng...'
-                      : 'Test nháp'}
+                      : 'Test Workspace'}
                   </span>
                   {totalDirtyDrafts > 0 && (
                     <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-violet-100 text-violet-700 border border-violet-200 font-bold">
                       {totalDirtyDrafts}
+                    </span>
+                  )}
+                  {workspaceOperationCount > 0 && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
+                      WS {workspaceOperationCount}
                     </span>
                   )}
                 </button>
@@ -873,7 +900,9 @@ export default function App() {
                   <span>Chạy thử</span>
                   {session.candidateOutput?.status === 'VALIDATED' && (
                     <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/40 font-bold">
-                      {session.candidateOutput?.metrics?.source === 'DRAFT_TEST'
+                      {session.candidateOutput?.metrics?.source === 'UNIFIED_WORKSPACE'
+                        ? 'Workspace'
+                        : session.candidateOutput?.metrics?.source === 'DRAFT_TEST'
                         ? 'Nháp'
                         : session.candidateOutput?.metrics?.source === 'MULTIPLAYER_LITE'
                         ? 'Multi'
@@ -881,9 +910,9 @@ export default function App() {
                     </span>
                   )}
                   {session.candidateOutput?.status === 'STALE' &&
-                    session.candidateOutput?.metrics?.source === 'DRAFT_TEST' && (
+                    ['DRAFT_TEST', 'UNIFIED_WORKSPACE'].includes(session.candidateOutput?.metrics?.source) && (
                       <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-700 border border-amber-200 font-bold">
-                        Nháp cũ
+                        Workspace cũ
                       </span>
                     )}
                 </button>
@@ -891,6 +920,11 @@ export default function App() {
 
 
             </div>
+
+            <PatchWorkspaceBar
+              session={session}
+              onChanged={handlePatchWorkspaceUpdated}
+            />
 
             {/* Nội dung từng tab */}
             <div className={`min-h-0 flex-1 ${
@@ -974,6 +1008,7 @@ export default function App() {
             ) : activeTab === 'multiplayer' ? (
               <MultiplayerPanel
                 session={session}
+                onWorkspaceUpdated={handlePatchWorkspaceUpdated}
                 onCandidateBuilt={(candidate) => {
                   session.candidateOutput = candidate;
                   setSession({ ...session });
@@ -990,6 +1025,7 @@ export default function App() {
                   setDirtyItemCount(count);
                   persistDraftChange({ items: count });
                 }}
+                onWorkspaceUpdated={handlePatchWorkspaceUpdated}
                 onNavigateToTestGame={(src) => {
                   setTestGameSource(src);
                   setActiveTab('test');

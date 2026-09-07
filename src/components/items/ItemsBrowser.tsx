@@ -39,11 +39,12 @@ interface ItemsBrowserProps {
   session: LoadedJarSession;
   onDraftsUpdated?: (dirtyCount: number) => void;
   onNavigateToTestGame?: (source: 'ORIGINAL' | 'PATCHED') => void;
+  onWorkspaceUpdated?: () => void;
 }
 
 const PAGE_SIZE = 50;
 
-export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }: ItemsBrowserProps) {
+export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame, onWorkspaceUpdated }: ItemsBrowserProps) {
   if (!session.itemDrafts) {
     session.itemDrafts = new Map<string, ItemDraft>();
   }
@@ -520,6 +521,7 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
           analysisData={analysisData}
           selectedItem={selectedItem}
           onClose={() => setShowNewItemModal(false)}
+          onWorkspaceUpdated={onWorkspaceUpdated}
           onBuilt={() => {
             setShowNewItemModal(false);
             onNavigateToTestGame?.('PATCHED');

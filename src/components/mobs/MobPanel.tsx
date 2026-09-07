@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  CheckCircle2,
   Bug,
   Gauge,
   Heart,
@@ -172,14 +173,14 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
             </div>
           </div>
         </div>
-        <div className="hidden xl:flex items-center gap-1.5 text-[10px] text-amber-600 font-mono">
-          <AlertTriangle className="w-3.5 h-3.5" />
-          Chưa nối writer Test nháp
+        <div className="hidden xl:flex items-center gap-1.5 text-[10px] text-emerald-600 font-mono">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          Test nháp writer: a/a/a/A.u
         </div>
       </div>
 
-      <div className="shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
-        Panel này ưu tiên <strong>xem đúng dữ liệu + chỉnh nháp + autosave</strong>. Spawn cụ thể từng map vẫn chỉnh trực tiếp ở panel <strong>Map</strong>.
+      <div className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
+        Nháp template quái giờ được patch thật vào <strong>a/a/a/A.u</strong> khi Test Workspace/Test nháp. Spawn cụ thể từng map (level/HP/vị trí) vẫn chỉnh riêng trong panel <strong>Map</strong>.
       </div>
 
       <div className="min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-2">

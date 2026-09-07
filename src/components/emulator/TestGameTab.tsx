@@ -59,9 +59,13 @@ export function TestGameTab({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const candidate = session.candidateOutput;
-  const isDraftTestCandidate = candidate?.metrics?.source === 'DRAFT_TEST';
+  const isUnifiedWorkspaceCandidate =
+    candidate?.metrics?.source === 'UNIFIED_WORKSPACE';
+  const isDraftTestCandidate =
+    candidate?.metrics?.source === 'DRAFT_TEST' || isUnifiedWorkspaceCandidate;
   const isMultiplayerCandidate =
-    candidate?.metrics?.source === 'MULTIPLAYER_LITE';
+    candidate?.metrics?.source === 'MULTIPLAYER_LITE' ||
+    Boolean(isUnifiedWorkspaceCandidate && candidate?.metrics?.multiplayerLite);
   const draftCandidateFresh =
     Boolean(isDraftTestCandidate && candidate?.status === 'VALIDATED') &&
     isDraftTestCandidateFresh(session);
@@ -72,14 +76,20 @@ export function TestGameTab({
     initialSource === 'PATCHED' &&
     (!candidate || isDraftTestCandidate) &&
     !draftCandidateFresh;
-  const patchedSourceLabel = isMultiplayerCandidate
+  const patchedSourceLabel = isUnifiedWorkspaceCandidate
+    ? draftCandidateFresh
+      ? 'Workspace hợp nhất'
+      : 'Workspace cần dựng lại'
+    : isMultiplayerCandidate
     ? 'Multiplayer Lite'
     : isDraftTestCandidate
     ? draftCandidateFresh
       ? 'Nháp đã dựng'
       : 'Nháp cần dựng lại'
     : 'JAR đã vá';
-  const patchedRunLabel = isMultiplayerCandidate
+  const patchedRunLabel = isUnifiedWorkspaceCandidate
+    ? 'workspace'
+    : isMultiplayerCandidate
     ? 'multiplayer'
     : isDraftTestCandidate
     ? 'nháp'
@@ -130,20 +140,27 @@ export function TestGameTab({
 
       const bytes = await current.blob.arrayBuffer();
       const sha = await shortHash(bytes);
-      const draftCandidate = current.metrics?.source === 'DRAFT_TEST';
+      const unifiedCandidate = current.metrics?.source === 'UNIFIED_WORKSPACE';
+      const draftCandidate =
+        current.metrics?.source === 'DRAFT_TEST' || unifiedCandidate;
       const multiplayerCandidate =
-        current.metrics?.source === 'MULTIPLAYER_LITE';
+        current.metrics?.source === 'MULTIPLAYER_LITE' ||
+        Boolean(unifiedCandidate && current.metrics?.multiplayerLite);
 
       sess.addLog(
         'info',
         `${
-          multiplayerCandidate
+          unifiedCandidate
+            ? '[Source: WORKSPACE]'
+            : multiplayerCandidate
             ? '[Source: MULTIPLAYER]'
             : draftCandidate
             ? '[Source: DRAFT]'
             : '[Source: PATCHED]'
         } Đang nạp ${
-          multiplayerCandidate
+          unifiedCandidate
+            ? 'JAR hợp nhất toàn bộ Patch Workspace'
+            : multiplayerCandidate
             ? 'JAR Multiplayer Lite'
             : draftCandidate
             ? 'JAR test nháp vừa dựng'
@@ -217,13 +234,13 @@ export function TestGameTab({
         }
 
         if (
-          current.metrics?.source === 'DRAFT_TEST' &&
+          ['DRAFT_TEST', 'UNIFIED_WORKSPACE'].includes(current.metrics?.source) &&
           !isDraftTestCandidateFresh(session)
         ) {
           current.status = 'STALE';
           sess.addLog(
             'error',
-            '[Source: DRAFT] Nháp đã thay đổi sau lần dựng JAR test. Bấm “Test nháp” lại để build bản mới; không chạy candidate cũ.'
+            '[Source: WORKSPACE] Workspace đã thay đổi sau lần dựng JAR. Bấm “Test Workspace” để build bản mới; không chạy candidate cũ.'
           );
           return;
         }
@@ -494,7 +511,7 @@ export function TestGameTab({
               <div className="text-zinc-600">Chưa có nhật ký. Chọn nguồn JAR rồi bấm Chạy.</div>
             ) : (
               logs.map((log) => (
-                <div key={log.id} className={log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-amber-400' : log.message.includes('[Source: MULTIPLAYER]') ? 'text-cyan-300' : log.message.includes('[Source: DRAFT]') ? 'text-violet-300' : log.message.includes('[Source: PATCHED]') ? 'text-amber-300' : log.message.includes('[Source: ORIGINAL]') ? 'text-sky-300' : 'text-zinc-400'}>
+                <div key={log.id} className={log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-amber-400' : log.message.includes('[Source: WORKSPACE]') ? 'text-emerald-300' : log.message.includes('[Source: MULTIPLAYER]') ? 'text-cyan-300' : log.message.includes('[Source: DRAFT]') ? 'text-violet-300' : log.message.includes('[Source: PATCHED]') ? 'text-amber-300' : log.message.includes('[Source: ORIGINAL]') ? 'text-sky-300' : 'text-zinc-400'}>
                   <span className="text-zinc-600 mr-2">{log.timestamp}</span>{log.message}
                 </div>
               ))

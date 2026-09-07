@@ -555,7 +555,8 @@ async function fetchClientClasses(): Promise<Map<string, Uint8Array>> {
 
 export async function buildMultiplayerCandidate(
   session: LoadedJarSession,
-  inputConfig: MultiplayerLiteConfig
+  inputConfig: MultiplayerLiteConfig,
+  baseBlob?: Blob
 ): Promise<CandidateOutputJar> {
   const config = validateConfig(inputConfig);
   const audit = await auditMultiplayerCompatibility(session);
@@ -568,8 +569,10 @@ export async function buildMultiplayerCandidate(
   }
 
   const clientClasses = await fetchClientClasses();
-  const originalBytes = await session.originalFile.arrayBuffer();
-  const zip = await JSZip.loadAsync(originalBytes.slice(0));
+  const baseBytes = baseBlob
+    ? await baseBlob.arrayBuffer()
+    : await session.originalFile.arrayBuffer();
+  const zip = await JSZip.loadAsync(baseBytes.slice(0));
 
   const aiEntry = zip.file('a/ai.class');
   if (!aiEntry) throw new Error('Không tìm thấy a/ai.class.');
