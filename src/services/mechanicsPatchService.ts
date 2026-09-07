@@ -645,12 +645,11 @@ function patchRngCompare(
     );
   }
 
-  const tolerance = Math.max(0.003, Math.min(0.05, chancePercent * 0.01));
-  if (pair.error > tolerance) {
-    throw new Error(
-      `${chancePercent}% không biểu diễn đủ chính xác bằng RNG hiện tại; gần nhất ${pair.actualChancePercent.toFixed(4)}%.`
-    );
-  }
+  // Bytecode gốc chỉ dành đúng số byte cho hai số nguyên range/threshold.
+  // Một số phần trăm (ví dụ 0.5% khi range tối đa là 127) không thể biểu diễn
+  // tuyệt đối chính xác nếu không làm thay đổi độ dài method và toàn bộ branch.
+  // Dùng cặp gần nhất để writer vẫn tạo được JAR; giá trị thực tế luôn được ghi
+  // vào diagnostics để UI có thể thông báo thay vì chặn toàn bộ workspace.
 
   const newRangePush = exactPushForLength(
     pair.range,

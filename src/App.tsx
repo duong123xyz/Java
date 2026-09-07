@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Sparkles,
   Network,
+  Download,
 } from 'lucide-react';
 import { LoadedJarSession } from './types/jar';
 import { loadAndAnalyzeJarSession } from './services/jarService';
@@ -524,6 +525,46 @@ export default function App() {
     }
   };
 
+  const downloadJarBlob = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleExportWorkspaceJar = async () => {
+    if (!session || isBuildingDraftTest) return;
+
+    let candidate =
+      session.candidateOutput?.status === 'VALIDATED'
+        ? session.candidateOutput
+        : null;
+
+    if (!candidate && totalDirtyDrafts > 0) {
+      candidate = await handleTestDraft(false);
+    }
+
+    if (candidate?.status === 'VALIDATED') {
+      downloadJarBlob(candidate.blob, candidate.fileName);
+      return;
+    }
+
+    if (totalDirtyDrafts === 0) {
+      const originalName = session.jarInfo.fileName || 'game.jar';
+      const outputName = originalName.toLowerCase().endsWith('.jar')
+        ? `${originalName.slice(0, -4)}_workspace.jar`
+        : `${originalName}_workspace.jar`;
+      downloadJarBlob(session.originalFile, outputName);
+      return;
+    }
+
+    window.alert('Không thể xuất JAR: bản dựng workspace chưa vượt qua kiểm tra. Xem lỗi ở Test Workspace.');
+  };
+
   return (
     <div className="light-theme h-screen overflow-hidden bg-zinc-100 text-zinc-900 flex flex-col font-sans selection:bg-emerald-200 selection:text-emerald-900">
       <style>{LIGHT_THEME_CSS}</style>
@@ -572,6 +613,21 @@ export default function App() {
                     ? 'Đã khôi phục'
                     : 'Tự lưu'}
                 </div>
+                <button
+                  id="export-workspace-jar-button"
+                  type="button"
+                  onClick={() => void handleExportWorkspaceJar()}
+                  disabled={isBuildingDraftTest}
+                  className="px-3 py-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 rounded flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Dựng, kiểm tra và tải JAR chứa toàn bộ thay đổi trong workspace"
+                >
+                  {isBuildingDraftTest ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isBuildingDraftTest ? 'Đang dựng...' : 'Xuất file JAR'}</span>
+                </button>
                 <button
                   id="close-jar-button"
                   type="button"
