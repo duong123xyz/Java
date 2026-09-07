@@ -27,6 +27,10 @@ import {
   serializeMapDraftValues,
 } from './mapDataService';
 import {
+  analyzeMobs,
+  getDirtyMobCount,
+} from './mobDataService';
+import {
   analyzeCharacterDefaults,
   getCharacterDraft,
   getCharacterDraftFingerprint,
@@ -40,6 +44,20 @@ import {
   getGameMechanicsDraft,
   getGameMechanicsDirtyCount,
 } from './gameMechanicsService';
+import { buildMechanicsPatches } from './mechanicsPatchService';
+import {
+  analyzeSkills,
+  getDirtySkillDraftEntries,
+  getSkillDraftFingerprint,
+  serializeSkillDraftValues,
+} from './skillDataService';
+import {
+  getDirtyPartDraftEntries,
+  getPartDraftFingerprint,
+  loadPartSnapshot,
+  PART_SCHEMA,
+  serializePartDraftValues,
+} from './partDataService';
 import { parseClassFile } from './classFileParser';
 
 export type DraftTestPhase =
@@ -58,7 +76,7 @@ export interface DraftTestProgress {
 }
 
 export interface DraftTestBlocker {
-  area: 'Vật phẩm' | 'NPC' | 'Map' | 'Boss' | 'Cơ chế' | 'Nhân vật' | 'Hệ thống';
+  area: 'Vật phẩm' | 'NPC' | 'Map' | 'Quái' | 'Kỹ năng' | 'Ngoại hình' | 'Boss' | 'Cơ chế' | 'Nhân vật' | 'Hệ thống';
   count: number;
   message: string;
 }
@@ -67,6 +85,9 @@ export interface DraftTestSummary {
   itemDrafts: number;
   npcDrafts: number;
   mapDrafts: number;
+  mobDrafts: number;
+  skillDrafts: number;
+  partDrafts: number;
   bossDrafts: number;
   mechanicDrafts: number;
   characterDrafts: number;
@@ -114,6 +135,9 @@ function createSummary(): DraftTestSummary {
     itemDrafts: 0,
     npcDrafts: 0,
     mapDrafts: 0,
+    mobDrafts: 0,
+    skillDrafts: 0,
+    partDrafts: 0,
     bossDrafts: 0,
     mechanicDrafts: 0,
     characterDrafts: 0,
@@ -492,6 +516,17 @@ async function collectUnsupportedDrafts(
 ): Promise<DraftTestBlocker[]> {
   const blockers: DraftTestBlocker[] = [];
 
+  const mobSnapshot = await analyzeMobs(session);
+  summary.mobDrafts = getDirtyMobCount(session, mobSnapshot.mobs);
+  if (summary.mobDrafts > 0) {
+    blockers.push({
+      area: 'Quái',
+      count: summary.mobDrafts,
+      message:
+        'Quái đã có nháp ở panel a/a/a/A nhưng writer cho Test nháp chưa được nối. Tool chặn để tránh bạn tưởng rằng bản test đã áp dụng chỉ số quái.',
+    });
+  }
+
   summary.bossDrafts = getDirtyBossCount(session);
   if (summary.bossDrafts > 0) {
     blockers.push({
@@ -499,17 +534,6 @@ async function collectUnsupportedDrafts(
       count: summary.bossDrafts,
       message:
         'Boss hiện có nháp nhưng writer numeric/runtime chưa hoàn thiện. Test nháp sẽ không âm thầm bỏ qua thay đổi Boss.',
-    });
-  }
-
-  const mechanicDraft = getGameMechanicsDraft(session);
-  summary.mechanicDrafts = getGameMechanicsDirtyCount(mechanicDraft);
-  if (summary.mechanicDrafts > 0) {
-    blockers.push({
-      area: 'Cơ chế',
-      count: summary.mechanicDrafts,
-      message:
-        'Cơ chế game có nháp nhưng một số thay đổi cần patch numeric/branch bytecode; chưa đủ an toàn để tự build test.',
     });
   }
 
@@ -556,6 +580,8 @@ export function getDraftStateFingerprint(session: LoadedJarSession): string {
     items: stableItemDraftFingerprint(session),
     npc: stableNpcDraftFingerprint(session),
     map: getMapDraftFingerprint(session),
+    skills: getSkillDraftFingerprint(session),
+    parts: getPartDraftFingerprint(session),
     boss: getBossDraftFingerprint(session),
     character: getCharacterDraftFingerprint(session),
     mechanics: getGameMechanicsDraft(session),
@@ -768,18 +794,159 @@ export async function buildDraftTestCandidate(
       }
     }
 
-    progress('PLANNING', 'Đang kiểm tra phần nháp chưa có writer...', 2, 5);
+
+    // 4) Kỹ năng — static String[][] a/a/a/W. Cột skills chứa array JSON đã escape.
+    const skillSnapshot = await analyzeSkills(session);
+    const dirtySkills = getDirtySkillDraftEntries(session, skillSnapshot.skills);
+    summary.skillDrafts = dirtySkills.length;
+
+    if (dirtySkills.length > 0) {
+      const allRows: StringTableRow[] = skillSnapshot.skills.map((skill) => ({
+        rowIndex: skill.rowIndex,
+        values: [...skill.sourceValues],
+        cellEvidences: skill.cellEvidences,
+        evidence: {
+          instructionOffsets: [],
+          summary: `a/a/a/W.u[row ${skill.rowIndex}]`,
+        },
+      }));
+
+      const rowByIndex = new Map(allRows.map((row) => [row.rowIndex, row]));
+      const changes: GenericTableChange[] = dirtySkills.map(({ skill, draft }) => ({
+        row: rowByIndex.get(skill.rowIndex)!,
+        nextValues: serializeSkillDraftValues(skill, draft),
+      }));
+
+      const built = await buildGenericTablePlans(
+        session,
+        skillSnapshot.sourceClass,
+        skillSnapshot.sourceField,
+        skillSnapshot.schema,
+        allRows,
+        changes,
+        'Kỹ năng'
+      );
+      blockers.push(...built.blockers);
+
+      if (built.plans.length > 0) {
+        jobs.push({
+          sourceClass: skillSnapshot.sourceClass,
+          schemaColumns: skillSnapshot.schema,
+          group: makeGroup(skillSnapshot.sourceClass, built.plans),
+          label: 'Kỹ năng',
+        });
+      }
+    }
+
+
+    // 5) Ngoại hình / Part Data — 14 bảng F..S, mỗi row [id,type,frames].
+    // Chỉ sửa cột frames; Part ID/type và số lượng frame bị khóa ở panel.
+    const partSnapshot = await loadPartSnapshot(session);
+    const dirtyParts = getDirtyPartDraftEntries(session, partSnapshot.parts);
+    summary.partDrafts = dirtyParts.length;
+
+    if (dirtyParts.length > 0) {
+      const dirtyByClass = new Map<
+        string,
+        typeof dirtyParts
+      >();
+
+      for (const entry of dirtyParts) {
+        const list = dirtyByClass.get(entry.part.sourceClass) ?? [];
+        list.push(entry);
+        dirtyByClass.set(entry.part.sourceClass, list);
+      }
+
+      for (const table of partSnapshot.tables) {
+        const dirtyInClass = dirtyByClass.get(table.sourceClass) ?? [];
+        if (dirtyInClass.length === 0) continue;
+
+        const allRows: StringTableRow[] = table.rows.map((row) => ({
+          rowIndex: row.rowIndex,
+          values: [...row.values],
+          cellEvidences: row.cellEvidences,
+          evidence: {
+            instructionOffsets: row.evidence?.instructionOffsets ?? [],
+            summary:
+              row.evidence?.summary ??
+              `${table.sourceClass}.u[row ${row.rowIndex}]`,
+          },
+        }));
+
+        const rowByIndex = new Map(
+          allRows.map((row) => [row.rowIndex, row])
+        );
+
+        const changes: GenericTableChange[] = dirtyInClass.map(
+          ({ part, draft }) => ({
+            row: rowByIndex.get(part.sourceRow)!,
+            nextValues: serializePartDraftValues(part, draft),
+          })
+        );
+
+        const built = await buildGenericTablePlans(
+          session,
+          table.sourceClass,
+          table.sourceField,
+          [...PART_SCHEMA],
+          allRows,
+          changes,
+          'Ngoại hình'
+        );
+        blockers.push(...built.blockers);
+
+        if (built.plans.length > 0) {
+          jobs.push({
+            sourceClass: table.sourceClass,
+            schemaColumns: [...PART_SCHEMA],
+            group: makeGroup(table.sourceClass, built.plans),
+            label: 'Ngoại hình',
+          });
+        }
+      }
+    }
+
+    progress('PLANNING', 'Đang dựng writer Cơ chế và kiểm tra nháp...', 2, 5);
+
+    const mechanicDraft = getGameMechanicsDraft(session);
+    summary.mechanicDrafts = getGameMechanicsDirtyCount(mechanicDraft);
+    const mechanicsResult = await buildMechanicsPatches(session);
+
+    if (mechanicsResult.status === 'FAILED') {
+      blockers.push({
+        area: 'Cơ chế',
+        count: summary.mechanicDrafts,
+        message:
+          mechanicsResult.errorMessage ??
+          'Mechanics writer thất bại khi dựng bytecode patch.',
+      });
+    }
+
+    for (const blocker of mechanicsResult.blockers) {
+      blockers.push({
+        area: 'Cơ chế',
+        count: 1,
+        message: `${blocker.field}: ${blocker.message}`,
+      });
+    }
+
     blockers.push(...(await collectUnsupportedDrafts(session, summary)));
 
     const merged = mergeJobs(jobs);
     blockers.push(...merged.blockers);
 
     summary.supportedDrafts =
-      summary.itemDrafts + summary.npcDrafts + summary.mapDrafts;
+      summary.itemDrafts +
+      summary.npcDrafts +
+      summary.mapDrafts +
+      summary.skillDrafts +
+      summary.partDrafts +
+      mechanicsResult.appliedDraftCount;
     summary.unsupportedDrafts =
+      summary.mobDrafts +
       summary.bossDrafts +
-      summary.mechanicDrafts +
-      summary.characterDrafts;
+      summary.characterDrafts +
+      mechanicsResult.unsupportedDraftCount;
 
     if (
       summary.supportedDrafts === 0 &&
@@ -801,7 +968,10 @@ export async function buildDraftTestCandidate(
     }
 
     const rewriteJobs = merged.jobs;
-    if (rewriteJobs.length === 0) {
+    if (
+      rewriteJobs.length === 0 &&
+      mechanicsResult.rewrittenClasses.size === 0
+    ) {
       return {
         status: 'NO_CHANGES',
         blockers: [],
@@ -811,13 +981,20 @@ export async function buildDraftTestCandidate(
 
     progress(
       'REWRITING',
-      `Đang rewrite ${rewriteJobs.length} class trong RAM...`,
+      `Đang rewrite ${
+        rewriteJobs.length + mechanicsResult.rewrittenClasses.size
+      } class trong RAM...`,
       3,
       5
     );
 
     const rewritten = new Map<string, ArrayBuffer>();
     let totalCells = 0;
+
+    for (const [path, bytes] of mechanicsResult.rewrittenClasses) {
+      rewritten.set(normalizeClassEntryPath(path), bytes);
+    }
+    totalCells += mechanicsResult.appliedPatchCount;
 
     for (const job of rewriteJobs) {
       const result = await rewriteJob(session, job);
@@ -832,10 +1009,18 @@ export async function buildDraftTestCandidate(
         };
       }
 
-      rewritten.set(
-        normalizeClassEntryPath(job.sourceClass),
-        result.rewrittenBytes
-      );
+      const classPath = normalizeClassEntryPath(job.sourceClass);
+      if (rewritten.has(classPath)) {
+        return {
+          status: 'FAILED',
+          blockers: [],
+          summary,
+          errorMessage:
+            `Xung đột writer: ${classPath} vừa được Cơ chế vừa được table writer sửa trong cùng lượt test.`,
+        };
+      }
+
+      rewritten.set(classPath, result.rewrittenBytes);
       totalCells += result.actualChangedCount;
     }
 

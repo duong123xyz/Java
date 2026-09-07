@@ -12,10 +12,14 @@ import {
   SlidersHorizontal,
   Crown,
   MapPinned,
+  Bug,
   UserRound,
   PlayCircle,
   Loader2,
   CheckCircle2,
+  Sparkles,
+  Network,
+  Shirt,
 } from 'lucide-react';
 import { LoadedJarSession } from './types/jar';
 import { loadAndAnalyzeJarSession } from './services/jarService';
@@ -29,7 +33,11 @@ import { GameDataPanel } from './components/game-data/GameDataPanel';
 import { GameMechanicsPanel } from './components/mechanics/GameMechanicsPanel';
 import { BossPanel } from './components/boss/BossPanel';
 import { MapPanel } from './components/map/MapPanel';
+import { MobPanel } from './components/mobs/MobPanel';
 import { CharacterPanel } from './components/character/CharacterPanel';
+import { SkillPanel } from './components/skills/SkillPanel';
+import { AppearancePanel } from './components/appearance/AppearancePanel';
+import { MultiplayerPanel } from './components/multiplayer/MultiplayerPanel';
 import { getDirtyCount, discardAllDrafts } from './services/itemDraftService';
 import {
   buildDraftTestCandidate,
@@ -264,7 +272,7 @@ const LIGHT_THEME_CSS = `
 
 export default function App() {
   const [session, setSession] = useState<LoadedJarSession | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'game-data' | 'maps' | 'characters' | 'bosses' | 'mechanics' | 'explorer' | 'items' | 'test'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'game-data' | 'maps' | 'mobs' | 'characters' | 'skills' | 'appearance' | 'bosses' | 'mechanics' | 'multiplayer' | 'explorer' | 'items' | 'test'>('overview');
   const [testGameSource, setTestGameSource] = useState<'ORIGINAL' | 'PATCHED'>('ORIGINAL');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -273,7 +281,10 @@ export default function App() {
   const [dirtyMechanicCount, setDirtyMechanicCount] = useState(0);
   const [dirtyBossCount, setDirtyBossCount] = useState(0);
   const [dirtyMapCount, setDirtyMapCount] = useState(0);
+  const [dirtyMobCount, setDirtyMobCount] = useState(0);
   const [dirtyCharacterCount, setDirtyCharacterCount] = useState(0);
+  const [dirtySkillCount, setDirtySkillCount] = useState(0);
+  const [dirtyPartCount, setDirtyPartCount] = useState(0);
   const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
   const [isBuildingDraftTest, setIsBuildingDraftTest] = useState(false);
   const [draftTestProgress, setDraftTestProgress] = useState<DraftTestProgress | null>(null);
@@ -287,9 +298,12 @@ export default function App() {
     items: patch.items ?? dirtyItemCount,
     npcs: patch.npcs ?? dirtyNpcCount,
     maps: patch.maps ?? dirtyMapCount,
+    mobs: patch.mobs ?? dirtyMobCount,
     characters: patch.characters ?? dirtyCharacterCount,
     bosses: patch.bosses ?? dirtyBossCount,
     mechanics: patch.mechanics ?? dirtyMechanicCount,
+    skills: patch.skills ?? dirtySkillCount,
+    parts: patch.parts ?? dirtyPartCount,
   });
 
   const persistDraftChange = (
@@ -319,9 +333,12 @@ export default function App() {
         setDirtyItemCount(restored.counts.items);
         setDirtyNpcCount(restored.counts.npcs);
         setDirtyMapCount(restored.counts.maps);
+        setDirtyMobCount(restored.counts.mobs);
         setDirtyCharacterCount(restored.counts.characters);
         setDirtyBossCount(restored.counts.bosses);
         setDirtyMechanicCount(restored.counts.mechanics);
+        setDirtySkillCount(restored.counts.skills);
+        setDirtyPartCount(restored.counts.parts);
         setWorkspaceStatus('restored');
         setErrorMessage(null);
       } catch (error) {
@@ -369,9 +386,12 @@ export default function App() {
         items: 0,
         npcs: 0,
         maps: 0,
+        mobs: 0,
         characters: 0,
         bosses: 0,
         mechanics: 0,
+        skills: 0,
+        parts: 0,
       });
       setWorkspaceStatus('saved');
       setSession(loadedSession);
@@ -381,7 +401,10 @@ export default function App() {
       setDirtyMechanicCount(0);
       setDirtyBossCount(0);
       setDirtyMapCount(0);
+      setDirtyMobCount(0);
       setDirtyCharacterCount(0);
+      setDirtySkillCount(0);
+      setDirtyPartCount(0);
       setDraftTestProgress(null);
       setDraftTestResult(null);
     } catch (err: unknown) {
@@ -400,7 +423,10 @@ export default function App() {
       dirtyItems > 0 ||
       dirtyNpcCount > 0 ||
       dirtyMapCount > 0 ||
+      dirtyMobCount > 0 ||
       dirtyCharacterCount > 0 ||
+      dirtySkillCount > 0 ||
+      dirtyPartCount > 0 ||
       dirtyMechanicCount > 0 ||
       dirtyBossCount > 0
     ) {
@@ -425,7 +451,10 @@ export default function App() {
     setDirtyMechanicCount(0);
     setDirtyBossCount(0);
     setDirtyMapCount(0);
+    setDirtyMobCount(0);
     setDirtyCharacterCount(0);
+    setDirtySkillCount(0);
+    setDirtyPartCount(0);
     setDraftTestProgress(null);
     setDraftTestResult(null);
     setIsBuildingDraftTest(false);
@@ -437,12 +466,17 @@ export default function App() {
     dirtyItemCount +
     dirtyNpcCount +
     dirtyMapCount +
+    dirtyMobCount +
     dirtyCharacterCount +
+    dirtySkillCount +
+    dirtyPartCount +
     dirtyBossCount +
     dirtyMechanicCount;
 
-  const handleTestDraft = async () => {
-    if (!session || isBuildingDraftTest) return;
+  const handleTestDraft = async (
+    navigateToTest = true
+  ): Promise<import('./types/jar').CandidateOutputJar | null> => {
+    if (!session || isBuildingDraftTest) return null;
 
     setIsBuildingDraftTest(true);
     setDraftTestProgress({
@@ -462,8 +496,13 @@ export default function App() {
         session.candidateOutput = result.candidate;
         setSession({ ...session });
         setTestGameSource('PATCHED');
-        setActiveTab('test');
+        if (navigateToTest) {
+          setActiveTab('test');
+        }
+        return result.candidate;
       }
+
+      return null;
     } finally {
       setIsBuildingDraftTest(false);
     }
@@ -632,6 +671,64 @@ export default function App() {
                 </button>
 
                 <button
+                  id="tab-skills"
+                  type="button"
+                  onClick={() => setActiveTab('skills')}
+                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+                    activeTab === 'skills'
+                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-fuchsia-500" />
+                  <span>Kỹ năng</span>
+                  {dirtySkillCount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-fuchsia-500/20 text-fuchsia-700 border border-fuchsia-300 font-bold animate-pulse">
+                      {dirtySkillCount}
+                    </span>
+                  )}
+                </button>
+
+
+                <button
+                  id="tab-appearance"
+                  type="button"
+                  onClick={() => setActiveTab('appearance')}
+                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+                    activeTab === 'appearance'
+                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                  }`}
+                >
+                  <Shirt className="w-3.5 h-3.5 text-pink-500" />
+                  <span>Ngoại hình</span>
+                  {dirtyPartCount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-pink-500/20 text-pink-700 border border-pink-300 font-bold animate-pulse">
+                      {dirtyPartCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  id="tab-mobs"
+                  type="button"
+                  onClick={() => setActiveTab('mobs')}
+                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+                    activeTab === 'mobs'
+                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                  }`}
+                >
+                  <Bug className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Quái</span>
+                  {dirtyMobCount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/40 font-bold animate-pulse">
+                      {dirtyMobCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
                   id="tab-bosses"
                   type="button"
                   onClick={() => setActiveTab('bosses')}
@@ -712,9 +809,31 @@ export default function App() {
                 </button>
 
                 <button
+                  id="tab-multiplayer"
+                  type="button"
+                  onClick={() => setActiveTab('multiplayer')}
+                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+                    activeTab === 'multiplayer'
+                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                  }`}
+                >
+                  <Network className="w-3.5 h-3.5 text-cyan-500" />
+                  <span>Multiplayer</span>
+                  {session.candidateOutput?.status === 'VALIDATED' &&
+                    session.candidateOutput?.metrics?.source === 'MULTIPLAYER_LITE' && (
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-100 text-cyan-700 border border-cyan-200 font-bold">
+                        Ready
+                      </span>
+                    )}
+                </button>
+
+                <button
                   id="test-drafts-button"
                   type="button"
-                  onClick={handleTestDraft}
+                  onClick={() => {
+                    void handleTestDraft(true);
+                  }}
                   disabled={isBuildingDraftTest || totalDirtyDrafts === 0}
                   className="px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer bg-violet-500/10 border border-violet-500/30 text-violet-600 hover:bg-violet-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
                   title={
@@ -754,7 +873,11 @@ export default function App() {
                   <span>Chạy thử</span>
                   {session.candidateOutput?.status === 'VALIDATED' && (
                     <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/40 font-bold">
-                      {session.candidateOutput?.metrics?.source === 'DRAFT_TEST' ? 'Nháp' : 'Đã vá'}
+                      {session.candidateOutput?.metrics?.source === 'DRAFT_TEST'
+                        ? 'Nháp'
+                        : session.candidateOutput?.metrics?.source === 'MULTIPLAYER_LITE'
+                        ? 'Multi'
+                        : 'Đã vá'}
                     </span>
                   )}
                   {session.candidateOutput?.status === 'STALE' &&
@@ -771,7 +894,7 @@ export default function App() {
 
             {/* Nội dung từng tab */}
             <div className={`min-h-0 flex-1 ${
-              activeTab === 'bosses' || activeTab === 'maps' || activeTab === 'characters'
+              activeTab === 'bosses' || activeTab === 'maps' || activeTab === 'mobs' || activeTab === 'characters' || activeTab === 'skills' || activeTab === 'appearance' || activeTab === 'multiplayer'
                 ? 'overflow-hidden'
                 : 'overflow-auto'
             }`}>
@@ -800,12 +923,36 @@ export default function App() {
                   persistDraftChange({ bosses: count });
                 }}
               />
+            ) : activeTab === 'mobs' ? (
+              <MobPanel
+                session={session}
+                onDraftsUpdated={(count) => {
+                  setDirtyMobCount(count);
+                  persistDraftChange({ mobs: count });
+                }}
+              />
             ) : activeTab === 'characters' ? (
               <CharacterPanel
                 session={session}
                 onDraftsUpdated={(count) => {
                   setDirtyCharacterCount(count);
                   persistDraftChange({ characters: count });
+                }}
+              />
+            ) : activeTab === 'skills' ? (
+              <SkillPanel
+                session={session}
+                onDraftsUpdated={(count) => {
+                  setDirtySkillCount(count);
+                  persistDraftChange({ skills: count });
+                }}
+              />
+            ) : activeTab === 'appearance' ? (
+              <AppearancePanel
+                session={session}
+                onDraftsUpdated={(count) => {
+                  setDirtyPartCount(count);
+                  persistDraftChange({ parts: count });
                 }}
               />
             ) : activeTab === 'bosses' ? (
@@ -822,6 +969,16 @@ export default function App() {
                 onDraftsUpdated={(count) => {
                   setDirtyMechanicCount(count);
                   persistDraftChange({ mechanics: count });
+                }}
+              />
+            ) : activeTab === 'multiplayer' ? (
+              <MultiplayerPanel
+                session={session}
+                onCandidateBuilt={(candidate) => {
+                  session.candidateOutput = candidate;
+                  setSession({ ...session });
+                  setTestGameSource('PATCHED');
+                  setActiveTab('test');
                 }}
               />
             ) : activeTab === 'explorer' ? (
@@ -842,6 +999,7 @@ export default function App() {
               <TestGameTab
                 session={session}
                 initialSource={testGameSource}
+                onBuildDraftCandidate={() => handleTestDraft(false)}
                 onNavigateToPatchBuilder={() => setActiveTab('items')}
               />
             )}
@@ -918,7 +1076,7 @@ export default function App() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-[10px] font-mono">
                 <div className="p-2 rounded-lg bg-zinc-50 border border-zinc-200">
                   <div className="text-zinc-500">Hỗ trợ</div>
                   <div className="text-base font-bold text-emerald-600">
@@ -935,6 +1093,18 @@ export default function App() {
                   <div className="text-zinc-500">Map</div>
                   <div className="text-base font-bold text-blue-600">
                     {draftTestResult.summary.mapDrafts}
+                  </div>
+                </div>
+                <div className="p-2 rounded-lg bg-zinc-50 border border-zinc-200">
+                  <div className="text-zinc-500">Kỹ năng</div>
+                  <div className="text-base font-bold text-fuchsia-600">
+                    {draftTestResult.summary.skillDrafts}
+                  </div>
+                </div>
+                <div className="p-2 rounded-lg bg-zinc-50 border border-zinc-200">
+                  <div className="text-zinc-500">Ngoại hình</div>
+                  <div className="text-base font-bold text-pink-600">
+                    {draftTestResult.summary.partDrafts}
                   </div>
                 </div>
                 <div className="p-2 rounded-lg bg-zinc-50 border border-zinc-200">
@@ -975,6 +1145,8 @@ export default function App() {
                   <strong className="text-cyan-400 font-mono">{dirtyNpcCount}</strong> NPC,{' '}
                   <strong className="text-blue-400 font-mono">{dirtyMapCount}</strong> map,{' '}
                   <strong className="text-indigo-400 font-mono">{dirtyCharacterCount}</strong> nhân vật,{' '}
+                  <strong className="text-fuchsia-500 font-mono">{dirtySkillCount}</strong> kỹ năng,{' '}
+                  <strong className="text-pink-500 font-mono">{dirtyPartCount}</strong> ngoại hình,{' '}
                   <strong className="text-rose-400 font-mono">{dirtyBossCount}</strong> boss và{' '}
                   <strong className="text-violet-400 font-mono">{dirtyMechanicCount}</strong> cơ chế có nháp trong RAM.
                   Nếu đóng file JAR, toàn bộ thay đổi nháp này sẽ bị hủy.

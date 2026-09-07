@@ -11,7 +11,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { LoadedJarSession } from '../../types/jar';
+import { CandidateOutputJar, LoadedJarSession } from '../../types/jar';
 import {
   EmulatorSourceType,
   EmulatorRuntimeStatus,
@@ -26,6 +26,7 @@ interface TestGameTabProps {
   session: LoadedJarSession;
   initialSource?: EmulatorSourceType;
   onNavigateToPatchBuilder?: () => void;
+  onBuildDraftCandidate?: () => Promise<CandidateOutputJar | null>;
 }
 
 function shortHash(buffer: ArrayBuffer): Promise<string> {
@@ -42,6 +43,7 @@ export function TestGameTab({
   session,
   initialSource = 'ORIGINAL',
   onNavigateToPatchBuilder,
+  onBuildDraftCandidate,
 }: TestGameTabProps) {
   const [source, setSource] = useState<EmulatorSourceType>(initialSource);
   const [runtimeStatus, setRuntimeStatus] = useState<EmulatorRuntimeStatus>('IDLE');
@@ -50,16 +52,38 @@ export function TestGameTab({
   const [logs, setLogs] = useState<EmulatorLogEntry[]>([]);
   const [isFocused, setIsFocused] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [isRebuildingDraft, setIsRebuildingDraft] = useState(false);
 
   const testSessionRef = useRef<DefaultJ2meTestSession | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const candidate = session.candidateOutput;
-  const patchedAvailable = candidate?.status === 'VALIDATED';
   const isDraftTestCandidate = candidate?.metrics?.source === 'DRAFT_TEST';
-  const patchedSourceLabel = isDraftTestCandidate ? 'Nháp đã dựng' : 'JAR đã vá';
-  const patchedRunLabel = isDraftTestCandidate ? 'nháp' : 'JAR đã vá';
+  const isMultiplayerCandidate =
+    candidate?.metrics?.source === 'MULTIPLAYER_LITE';
+  const draftCandidateFresh =
+    Boolean(isDraftTestCandidate && candidate?.status === 'VALIDATED') &&
+    isDraftTestCandidateFresh(session);
+  const patchedAvailable =
+    candidate?.status === 'VALIDATED' &&
+    (!isDraftTestCandidate || draftCandidateFresh);
+  const draftNeedsRebuild =
+    initialSource === 'PATCHED' &&
+    (!candidate || isDraftTestCandidate) &&
+    !draftCandidateFresh;
+  const patchedSourceLabel = isMultiplayerCandidate
+    ? 'Multiplayer Lite'
+    : isDraftTestCandidate
+    ? draftCandidateFresh
+      ? 'Nháp đã dựng'
+      : 'Nháp cần dựng lại'
+    : 'JAR đã vá';
+  const patchedRunLabel = isMultiplayerCandidate
+    ? 'multiplayer'
+    : isDraftTestCandidate
+    ? 'nháp'
+    : 'JAR đã vá';
   const draftTestSummary = candidate?.metrics?.summary;
 
   useEffect(() => {
@@ -67,8 +91,14 @@ export function TestGameTab({
   }, [initialSource]);
 
   useEffect(() => {
-    if (source === 'PATCHED' && !patchedAvailable) setSource('ORIGINAL');
-  }, [source, patchedAvailable]);
+    if (
+      source === 'PATCHED' &&
+      !patchedAvailable &&
+      initialSource !== 'PATCHED'
+    ) {
+      setSource('ORIGINAL');
+    }
+  }, [source, patchedAvailable, initialSource]);
 
   useEffect(() => {
     const sess = new DefaultJ2meTestSession();
@@ -92,6 +122,86 @@ export function TestGameTab({
       testSessionRef.current.bindIframe(iframeRef.current);
     }
   }, []);
+
+  const runCandidateJar = useCallback(
+    async (current: CandidateOutputJar) => {
+      const sess = testSessionRef.current;
+      if (!sess) return false;
+
+      const bytes = await current.blob.arrayBuffer();
+      const sha = await shortHash(bytes);
+      const draftCandidate = current.metrics?.source === 'DRAFT_TEST';
+      const multiplayerCandidate =
+        current.metrics?.source === 'MULTIPLAYER_LITE';
+
+      sess.addLog(
+        'info',
+        `${
+          multiplayerCandidate
+            ? '[Source: MULTIPLAYER]'
+            : draftCandidate
+            ? '[Source: DRAFT]'
+            : '[Source: PATCHED]'
+        } Đang nạp ${
+          multiplayerCandidate
+            ? 'JAR Multiplayer Lite'
+            : draftCandidate
+            ? 'JAR test nháp vừa dựng'
+            : 'JAR đã vá'
+        }: ${current.fileName} (${bytes.byteLength} byte, sha256:${sha})`
+      );
+
+      await sess.loadJar(
+        bytes,
+        current.fileName,
+        session.jarInfo.manifest
+      );
+      return true;
+    },
+    [session.jarInfo.manifest]
+  );
+
+  const rebuildAndRunDraft = useCallback(async () => {
+    const sess = testSessionRef.current;
+    if (!sess || isStarting || isRebuildingDraft || !onBuildDraftCandidate) {
+      return;
+    }
+
+    setIsRebuildingDraft(true);
+    setIsStarting(true);
+    try {
+      sess.addLog(
+        'info',
+        '[Source: DRAFT] Candidate cũ thiếu hoặc đã stale. Đang dựng lại JAR test nháp...'
+      );
+
+      const rebuilt = await onBuildDraftCandidate();
+      if (!rebuilt || rebuilt.status !== 'VALIDATED') {
+        sess.addLog(
+          'error',
+          '[Source: DRAFT] Không dựng được candidate VALIDATED. Xem cảnh báo Test nháp để biết draft nào còn thiếu writer.'
+        );
+        return;
+      }
+
+      setSource('PATCHED');
+      await runCandidateJar(rebuilt);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sess.addLog(
+        'error',
+        `[Source: DRAFT] Dựng lại/chạy nháp thất bại: ${message}`
+      );
+    } finally {
+      setIsRebuildingDraft(false);
+      setIsStarting(false);
+    }
+  }, [
+    isRebuildingDraft,
+    isStarting,
+    onBuildDraftCandidate,
+    runCandidateJar,
+  ]);
 
   const loadActiveJar = useCallback(async () => {
     const sess = testSessionRef.current;
@@ -118,13 +228,7 @@ export function TestGameTab({
           return;
         }
 
-        const bytes = await current.blob.arrayBuffer();
-        const sha = await shortHash(bytes);
-        sess.addLog(
-          'info',
-          `${isDraftTestCandidate ? '[Source: DRAFT]' : '[Source: PATCHED]'} Đang nạp ${isDraftTestCandidate ? 'JAR test nháp trong RAM' : 'đúng bản JAR đã vá'}: ${current.fileName} (${bytes.byteLength} byte, sha256:${sha})`
-        );
-        await sess.loadJar(bytes, current.fileName, session.jarInfo.manifest);
+        await runCandidateJar(current);
         return;
       }
 
@@ -141,14 +245,20 @@ export function TestGameTab({
     } finally {
       setIsStarting(false);
     }
-  }, [isDraftTestCandidate, isStarting, session, source]);
+  }, [isStarting, runCandidateJar, session, source]);
 
   const switchSource = useCallback(async (next: EmulatorSourceType) => {
-    if (next === 'PATCHED' && !patchedAvailable) return;
+    if (
+      next === 'PATCHED' &&
+      !patchedAvailable &&
+      !onBuildDraftCandidate
+    ) {
+      return;
+    }
     if (next === source) return;
     await testSessionRef.current?.stop();
     setSource(next);
-  }, [patchedAvailable, source]);
+  }, [patchedAvailable, source, onBuildDraftCandidate]);
 
   const sendKey = useCallback((keyCode: number, type: 'down' | 'up') => {
     testSessionRef.current?.sendKey(keyCode, type);
@@ -206,7 +316,10 @@ export function TestGameTab({
     };
   }, [isFocused, sendKey]);
 
-  const currentName = source === 'PATCHED' && patchedAvailable ? candidate!.fileName : session.jarInfo.fileName;
+  const currentName =
+    source === 'PATCHED' && candidate
+      ? candidate.fileName
+      : session.jarInfo.fileName;
   const midlet = parseMidlet1(session.jarInfo.manifest);
 
   const keyButton = (label: string, code: number) => (
@@ -234,8 +347,25 @@ export function TestGameTab({
             <button type="button" onClick={() => switchSource('ORIGINAL')} className={`px-3 py-1.5 rounded-lg border text-xs font-mono ${source === 'ORIGINAL' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`}>
               <FileArchive className="inline w-3.5 h-3.5 mr-1" /> JAR gốc
             </button>
-            <button type="button" disabled={!patchedAvailable} onClick={() => switchSource('PATCHED')} className={`px-3 py-1.5 rounded-lg border text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed ${source === 'PATCHED' ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`} title={patchedAvailable ? candidate?.fileName : 'Chưa có JAR đã vá ở trạng thái VALIDATED'}>
-              {patchedSourceLabel} {patchedAvailable ? '✓' : '(chưa có)'}
+            <button
+              type="button"
+              disabled={!patchedAvailable && !onBuildDraftCandidate}
+              onClick={() => switchSource('PATCHED')}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed ${
+                source === 'PATCHED'
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                  : 'bg-zinc-950 border-zinc-800 text-zinc-400'
+              }`}
+              title={
+                patchedAvailable
+                  ? candidate?.fileName
+                  : onBuildDraftCandidate
+                  ? 'Bấm để chọn chế độ nháp; khi chạy tool sẽ tự dựng lại candidate.'
+                  : 'Chưa có JAR đã vá ở trạng thái VALIDATED'
+              }
+            >
+              {patchedSourceLabel}{' '}
+              {patchedAvailable ? '✓' : draftNeedsRebuild ? '(stale)' : '(chưa có)'}
             </button>
           </div>
         </div>
@@ -252,16 +382,38 @@ export function TestGameTab({
                   {draftTestSummary.modifiedCells} cell / {draftTestSummary.rewrittenClasses} class
                 </div>
               )}
+              {isMultiplayerCandidate && candidate?.metrics?.config && (
+                <div>
+                  <strong>Multiplayer:</strong>{' '}
+                  {candidate.metrics.config.host}:{candidate.metrics.config.port}
+                  {candidate.metrics.config.name
+                    ? ` · ${candidate.metrics.config.name}`
+                    : ''}
+                </div>
+              )}
             </>
           )}
         </div>
 
         {initialSource === 'PATCHED' && !patchedAvailable && (
-          <div className="flex gap-2 p-3 rounded-lg border border-red-800 bg-red-950/30 text-red-300 text-xs font-mono">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>
-              Bản test nháp/JAR đã vá không còn VALIDATED. Hãy bấm <strong>Test nháp</strong> hoặc build lại JAR trước khi chạy.
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-xs font-mono">
+            <div className="flex items-start gap-2 flex-1">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Bản nháp hiện tại chưa có candidate mới hoặc candidate cũ đã stale.
+                Không chạy JAR gốc thay thế.
+              </span>
+            </div>
+            {onBuildDraftCandidate && (
+              <button
+                type="button"
+                onClick={rebuildAndRunDraft}
+                disabled={isStarting || isRebuildingDraft}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold whitespace-nowrap cursor-pointer"
+              >
+                {isRebuildingDraft ? 'Đang dựng...' : 'Dựng lại & chạy nháp'}
+              </button>
+            )}
           </div>
         )}
 
@@ -271,9 +423,30 @@ export function TestGameTab({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={loadActiveJar} disabled={isStarting || (source === 'PATCHED' && !patchedAvailable)} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-zinc-950 font-bold text-xs font-mono flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={
+              source === 'PATCHED' && !patchedAvailable
+                ? rebuildAndRunDraft
+                : loadActiveJar
+            }
+            disabled={
+              isStarting ||
+              isRebuildingDraft ||
+              (source === 'PATCHED' &&
+                !patchedAvailable &&
+                !onBuildDraftCandidate)
+            }
+            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-zinc-950 font-bold text-xs font-mono flex items-center gap-1.5 cursor-pointer"
+          >
             <Play className="w-4 h-4 fill-current" />
-            {isStarting ? 'Đang khởi động...' : `Chạy ${source === 'PATCHED' ? patchedRunLabel : 'JAR gốc'}`}
+            {isRebuildingDraft
+              ? 'Đang dựng nháp...'
+              : isStarting
+              ? 'Đang khởi động...'
+              : source === 'PATCHED' && !patchedAvailable
+              ? 'Dựng lại & chạy nháp'
+              : `Chạy ${source === 'PATCHED' ? patchedRunLabel : 'JAR gốc'}`}
           </button>
           <button type="button" onClick={() => testSessionRef.current?.restart()} className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs font-mono text-zinc-200 flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Khởi động lại</button>
           <button type="button" onClick={() => testSessionRef.current?.stop()} className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-red-950/40 border border-zinc-700 text-xs font-mono text-zinc-200 flex items-center gap-1.5"><Square className="w-4 h-4" /> Dừng</button>
@@ -321,7 +494,7 @@ export function TestGameTab({
               <div className="text-zinc-600">Chưa có nhật ký. Chọn nguồn JAR rồi bấm Chạy.</div>
             ) : (
               logs.map((log) => (
-                <div key={log.id} className={log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-amber-400' : log.message.includes('[Source: DRAFT]') ? 'text-violet-300' : log.message.includes('[Source: PATCHED]') ? 'text-amber-300' : log.message.includes('[Source: ORIGINAL]') ? 'text-sky-300' : 'text-zinc-400'}>
+                <div key={log.id} className={log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-amber-400' : log.message.includes('[Source: MULTIPLAYER]') ? 'text-cyan-300' : log.message.includes('[Source: DRAFT]') ? 'text-violet-300' : log.message.includes('[Source: PATCHED]') ? 'text-amber-300' : log.message.includes('[Source: ORIGINAL]') ? 'text-sky-300' : 'text-zinc-400'}>
                   <span className="text-zinc-600 mr-2">{log.timestamp}</span>{log.message}
                 </div>
               ))

@@ -6,6 +6,11 @@ import {
   MapDraft,
 } from './mapDataService';
 import {
+  exportMobDrafts,
+  importMobDrafts,
+  MobDraft,
+} from './mobDataService';
+import {
   BossDraft,
   exportBossDrafts,
   importBossDrafts,
@@ -21,6 +26,16 @@ import {
   GameMechanicsDraft,
   importGameMechanicsDraft,
 } from './gameMechanicsService';
+import {
+  exportSkillDrafts,
+  importSkillDrafts,
+  SkillDraft,
+} from './skillDataService';
+import {
+  exportPartDrafts,
+  importPartDrafts,
+  PartDraft,
+} from './partDataService';
 
 const DB_NAME = 'nro-studio-workspace';
 const DB_VERSION = 1;
@@ -32,9 +47,12 @@ export interface WorkspaceDirtyCounts {
   items: number;
   npcs: number;
   maps: number;
+  mobs: number;
   characters: number;
   bosses: number;
   mechanics: number;
+  skills: number;
+  parts: number;
 }
 
 interface PersistedJarSource {
@@ -59,9 +77,12 @@ interface PersistedDraftSnapshot {
   itemDrafts: Array<[string, ItemDraft]>;
   npcDrafts: Record<string, any>;
   mapDrafts: Array<[number, MapDraft]>;
+  mobDrafts: Array<[number, MobDraft]>;
   bossDrafts: Array<[number, BossDraft]>;
   characterDrafts: Array<[CharacterPlanet, CharacterDraft]>;
   mechanicsDraft: GameMechanicsDraft;
+  skillDrafts: Array<[number, SkillDraft]>;
+  partDrafts: Array<[number, PartDraft]>;
   counts: WorkspaceDirtyCounts;
   savedAt: number;
 }
@@ -76,9 +97,12 @@ const EMPTY_COUNTS: WorkspaceDirtyCounts = {
   items: 0,
   npcs: 0,
   maps: 0,
+  mobs: 0,
   characters: 0,
   bosses: 0,
   mechanics: 0,
+  skills: 0,
+  parts: 0,
 };
 
 let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -91,9 +115,12 @@ function cloneCounts(counts?: Partial<WorkspaceDirtyCounts>): WorkspaceDirtyCoun
     items: Math.max(0, counts?.items ?? 0),
     npcs: Math.max(0, counts?.npcs ?? 0),
     maps: Math.max(0, counts?.maps ?? 0),
+    mobs: Math.max(0, counts?.mobs ?? 0),
     characters: Math.max(0, counts?.characters ?? 0),
     bosses: Math.max(0, counts?.bosses ?? 0),
     mechanics: Math.max(0, counts?.mechanics ?? 0),
+    skills: Math.max(0, counts?.skills ?? 0),
+    parts: Math.max(0, counts?.parts ?? 0),
   };
 }
 
@@ -251,9 +278,12 @@ function buildDraftSnapshot(
     ),
     npcDrafts,
     mapDrafts: exportMapDrafts(session),
+    mobDrafts: exportMobDrafts(session),
     bossDrafts: exportBossDrafts(session),
     characterDrafts: exportCharacterDrafts(session),
     mechanicsDraft: exportGameMechanicsDraft(session),
+    skillDrafts: exportSkillDrafts(session),
+    partDrafts: exportPartDrafts(session),
     counts: cloneCounts(counts),
     savedAt: Date.now(),
   };
@@ -321,9 +351,12 @@ export async function restoreWorkspaceDrafts(
 
   (session as any).gameNpcDrafts = { ...(snapshot.npcDrafts ?? {}) };
   importMapDrafts(session, snapshot.mapDrafts ?? []);
+  importMobDrafts(session, snapshot.mobDrafts ?? []);
   importBossDrafts(session, snapshot.bossDrafts ?? []);
   importCharacterDrafts(session, snapshot.characterDrafts ?? []);
   importGameMechanicsDraft(session, snapshot.mechanicsDraft);
+  importSkillDrafts(session, snapshot.skillDrafts ?? []);
+  importPartDrafts(session, snapshot.partDrafts ?? []);
 
   // candidateOutput cố ý không restore: JAR test phải build lại từ draft hiện tại.
   session.candidateOutput = undefined;

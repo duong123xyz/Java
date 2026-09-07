@@ -26,7 +26,7 @@
       <div id="spinner" style="display:none"></div>
       <div id="stage">IDLE</div>
       <div id="message">Runner sẵn sàng.</div>
-      <button id="retry" type="button">Thử runtime dự phòng</button>
+      <button id="retry" type="button">Tải lại runner</button>
       <div id="error"></div>
     </div>
   </div>
@@ -40,19 +40,16 @@ const BRIDGE_TARGET = window.opener && !window.opener.closed
   : (window.parent !== window ? window.parent : null);
 
 const CORE_HTTP_ROOT = '/emulator/core';
-const CORE_CHEERPJ_ROOT = '/app/emulator/core';
-const FREEJ2ME_LIBRARY = `${CORE_CHEERPJ_ROOT}/freej2me-web.jar`;
-const REQUESTED_VARIANT = sp.get('cj') || 'stable';
-const SAVED_VARIANT = localStorage.getItem('nro-studio-cheerpj-variant');
-const CHEERPJ_VARIANT = sp.get('forcecj') || SAVED_VARIANT || REQUESTED_VARIANT;
+const CORE_HTTP_JAR = `${CORE_HTTP_ROOT}/freej2me-web.jar`;
+const FREEJ2ME_STR_JAR = '/str/nro-freej2me-web.jar';
 const RESET_MODE = sp.get('reset') || 'rms';
-const CHEERPJ_LOADER = CHEERPJ_VARIANT === 'upstream'
-  ? 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js'
-  : 'https://cjrtnc.leaningtech.com/4.3/loader.js';
+
+// Dùng đúng loader đang được freej2me-web upstream pin trong run.html.
+const CHEERPJ_LOADER = 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js';
 
 const STAGE_TIMEOUT_MS = 45_000;
-const CORE_LOAD_TIMEOUT_MS = 28_000;
-const INIT_TIMEOUT_MS = 35_000;
+const CORE_LOAD_TIMEOUT_MS = 45_000;
+const INIT_TIMEOUT_MS = 45_000;
 
 const display = document.getElementById('display');
 const screenCtx = display.getContext('2d');
@@ -192,16 +189,9 @@ async function clearCachedLaunch(){
     db.close();
   }catch{}
 }
-function fallbackToUpstream(reason){
-  localStorage.setItem('nro-studio-cheerpj-variant','upstream');
-  log('warn',`Stable runtime bị treo: ${reason}. Chuyển sang runtime dự phòng.`);
-  const next=new URL(location.href);
-  next.searchParams.set('forcecj','upstream');
-  next.searchParams.set('fallback','1');
-  next.searchParams.set('t',String(Date.now()));
-  location.replace(next.toString());
-}
-retryBtn.addEventListener('click',()=>fallbackToUpstream('manual retry'));
+retryBtn.addEventListener('click', () => {
+  location.reload();
+});
 
 /* ---------- input queue ---------- */
 class EventQueue{
@@ -238,8 +228,8 @@ display.addEventListener('pointerup',e=>{pointerDown=false;evtQueue.queueEvent({
 /* ---------- runtime ---------- */
 async function loadCheerpJScript(){
   if(typeof window.cheerpjInit==='function'){runtime.runtimeScriptLoaded=true;runtime.cheerpjLoaded=true;return}
-  setStage('LOADING_RUNTIME',`Đang tải CheerpJ ${CHEERPJ_VARIANT}...`);
-  log('info',`[1] Loading CheerpJ ${CHEERPJ_VARIANT}: ${CHEERPJ_LOADER}`);
+  setStage('LOADING_RUNTIME','Đang tải CheerpJ runtime...');
+  log('info',`[1] Loading CheerpJ upstream: ${CHEERPJ_LOADER}`);
   await withTimeout(new Promise((resolve,reject)=>{
     const s=document.createElement('script');s.src=CHEERPJ_LOADER;s.async=true;s.onload=resolve;s.onerror=()=>reject(new Error('loader.js load failed'));document.head.appendChild(s);
   }),20_000,'CheerpJ loader');
@@ -303,40 +293,60 @@ async function initializeRuntime(){
     async Java_pl_zb3_freej2me_bridge_shell_Shell_sayObject(_lib,label){log('debug',`[FreeJ2ME object] ${label}`)},
   };
 
-  log('info',`[3] cheerpjInit via ${CHEERPJ_VARIANT}; topLevel=${IS_TOP_LEVEL}; secure=${window.isSecureContext}`);
-  await withTimeout(window.cheerpjInit({
-    version:8,status:'none',enableDebug:true,natives,
-    preloadProgress(done,total){
-      if(total){const pct=Math.floor(done/total*100);if(pct%10===0)setStage('LOADING_RUNTIME',`CheerpJ preload ${pct}%`)}
-    }
-  }),INIT_TIMEOUT_MS,'cheerpjInit');
+  log('info',`[3] cheerpjInit giống upstream; topLevel=${IS_TOP_LEVEL}; secure=${window.isSecureContext}`);
+
+  // Quan trọng: không ép version:8/status/debug khác upstream.
+  await withTimeout(
+    window.cheerpjInit({
+      enableDebug: false,
+      natives,
+    }),
+    INIT_TIMEOUT_MS,
+    'cheerpjInit'
+  );
   runtime.runtimeInitialized=true;
   log('info','[4] CheerpJ initialized.');
 
-  try{
-    const res=await fetch(`${CORE_HTTP_ROOT}/freej2me-web.jar`,{cache:'no-store'});
-    if(!res.ok)throw new Error(`HTTP ${res.status}`);
-    log('info',`[core] HTTP asset OK (${res.headers.get('content-length')||'?'} bytes)`);
-  }catch(e){
-    throw new Error(`Không đọc được FreeJ2ME core qua HTTP: ${e?.message||e}`);
+  // AI Studio/Cloud Run có thể không hỗ trợ HTTP Range theo cách /app filesystem
+  // của CheerpJ cần. Fetch toàn bộ core bằng browser rồi mount vào /str để
+  // cheerpjRunLibrary không phải đọc JAR qua HTTP Range.
+  setStage('LOADING_RUNTIME','Đang nạp FreeJ2ME core vào /str...');
+  const coreResponse = await withTimeout(
+    fetch(CORE_HTTP_JAR, { cache: 'no-store' }),
+    20_000,
+    'fetch FreeJ2ME core'
+  );
+  if (!coreResponse.ok) {
+    throw new Error(`Không tải được ${CORE_HTTP_JAR}: HTTP ${coreResponse.status}`);
   }
 
-  setStage('LOADING_RUNTIME',`Loading FreeJ2ME core: ${FREEJ2ME_LIBRARY}`);
-  log('info',`[5] cheerpjRunLibrary(${FREEJ2ME_LIBRARY})`);
-  try{
-    runtime.lib=await withTimeout(window.cheerpjRunLibrary(FREEJ2ME_LIBRARY),CORE_LOAD_TIMEOUT_MS,'cheerpjRunLibrary');
-  }catch(e){
-    if(CHEERPJ_VARIANT!=='upstream'){
-      await cacheLaunch(pendingLaunch).catch(()=>{});
-      fallbackToUpstream(e?.message||e);
-      return new Promise(()=>{});
-    }
-    throw e;
+  const coreBytes = new Uint8Array(
+    await withTimeout(coreResponse.arrayBuffer(), 20_000, 'read FreeJ2ME core bytes')
+  );
+  log('info',`[core] HTTP asset OK (${coreBytes.byteLength} bytes)`);
+
+  if (coreBytes.byteLength !== 972381) {
+    log('warn',`[core] Kích thước core khác upstream hiện tại: ${coreBytes.byteLength} bytes.`);
   }
+
+  if (typeof window.cheerpjAddStringFile !== 'function') {
+    throw new Error('CheerpJ loader không cung cấp cheerpjAddStringFile; không thể dùng /str workaround.');
+  }
+
+  window.cheerpjAddStringFile(FREEJ2ME_STR_JAR, coreBytes);
+  log('info',`[5] Core mounted in CheerpJ /str: ${FREEJ2ME_STR_JAR}`);
+
+  setStage('LOADING_RUNTIME',`Loading FreeJ2ME from memory: ${FREEJ2ME_STR_JAR}`);
+  runtime.lib = await withTimeout(
+    window.cheerpjRunLibrary(FREEJ2ME_STR_JAR),
+    CORE_LOAD_TIMEOUT_MS,
+    'cheerpjRunLibrary(/str)'
+  );
+
   runtime.FreeJ2ME=await runtime.lib.org.recompile.freej2me.FreeJ2ME;
   runtime.launcherUtil=await runtime.lib.pl.zb3.freej2me.launcher.LauncherUtil;
   runtime.freej2meLoaded=true;
-  setStage('RUNTIME_READY',`FreeJ2ME ready (${CHEERPJ_VARIANT}).`);
+  setStage('RUNTIME_READY','FreeJ2ME ready từ /str memory JAR.');
   log('info','[6] FreeJ2ME library ready.');
 }
 
@@ -425,17 +435,9 @@ async function bootstrap(){
     return;
   }
 
-  post('IFRAME_READY',{runnerVersion:`phase15-${CHEERPJ_VARIANT}`,runtimeInfo:runtimeInfo()});
-  setStage('IDLE',`Runner ${CHEERPJ_VARIANT} sẵn sàng.`);
+  post('IFRAME_READY',{runnerVersion:'phase16-memory-core',runtimeInfo:runtimeInfo()});
+  setStage('IDLE','Runner phase16 sẵn sàng. Core sẽ được nạp từ bộ nhớ /str.');
 
-  // Nếu stable vừa timeout và page tự reload sang upstream, payload JAR vẫn nằm trong IndexedDB.
-  if(sp.get('fallback')==='1'){
-    const cached=await readCachedLaunch();
-    if(cached?.jarBuffer){
-      log('info','[fallback] Khôi phục JAR từ runner cache và tiếp tục với runtime dự phòng.');
-      try{await launch(cached)}catch(e){fatal('Runtime dự phòng cũng thất bại',e,true)}
-    }
-  }
 }
 bootstrap();
 </script>

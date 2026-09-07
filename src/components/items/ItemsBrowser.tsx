@@ -9,6 +9,7 @@ import {
   Sparkles,
   ChevronLeft,
   Layers,
+  PackagePlus,
 } from 'lucide-react';
 import { LoadedJarSession } from '../../types/jar';
 import {
@@ -32,6 +33,7 @@ import {
 } from '../../services/itemDraftService';
 import { ItemEditorForm } from './ItemEditorForm';
 import { ChangesPanel } from './ChangesPanel';
+import { NewItemModal } from './NewItemModal';
 
 interface ItemsBrowserProps {
   session: LoadedJarSession;
@@ -57,6 +59,7 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showChangesModal, setShowChangesModal] = useState(false);
+  const [showNewItemModal, setShowNewItemModal] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [draftRevision, setDraftRevision] = useState(0);
 
@@ -286,6 +289,15 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
             </span>
             <button
               type="button"
+              onClick={() => setShowNewItemModal(true)}
+              className="px-3 py-1 rounded border text-xs font-mono flex items-center gap-1.5 bg-emerald-500/15 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+              title={selectedItem ? `Clone ${selectedItem.name} thành item mới` : 'Tạo Item Template mới'}
+            >
+              <PackagePlus className="w-3.5 h-3.5" />
+              <span>Thêm item</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setShowChangesModal(true)}
               className={`px-3 py-1 rounded border text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer ${
                 dirtyCount > 0
@@ -501,6 +513,19 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame }:
           )}
         </div>
       </div>
+
+      {showNewItemModal && (
+        <NewItemModal
+          session={session}
+          analysisData={analysisData}
+          selectedItem={selectedItem}
+          onClose={() => setShowNewItemModal(false)}
+          onBuilt={() => {
+            setShowNewItemModal(false);
+            onNavigateToTestGame?.('PATCHED');
+          }}
+        />
+      )}
 
       <ChangesPanel
         session={session}
