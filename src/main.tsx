@@ -6,6 +6,6 @@ import './index.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {location.pathname.startsWith('/play') ? <PlayerPortal /> : <App />}
+    {location.pathname.startsWith('/studio') ? <App /> : <PlayerPortal />}
   </StrictMode>,
 );

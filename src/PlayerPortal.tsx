@@ -6,14 +6,65 @@ import {LoadedJarSession} from './types/jar';
 
 interface Account { id: number; username: string }
 
+const LOCAL_USERS_KEY = 'nro-web-local-users-v1';
+const LOCAL_SESSION_KEY = 'nro-web-local-session-v1';
+
+async function digest(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(hash)).map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+function localUsers(): Record<string, {id: number; username: string; passwordHash: string}> {
+  try { return JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+async function localAuth(path: string, init?: RequestInit) {
+  const body = init?.body ? JSON.parse(String(init.body)) : {};
+  const users = localUsers();
+  if (path.endsWith('/me')) {
+    const key = localStorage.getItem(LOCAL_SESSION_KEY);
+    if (!key || !users[key]) throw new Error('Chưa đăng nhập.');
+    return {user: {id: users[key].id, username: users[key].username}};
+  }
+  if (path.endsWith('/logout')) {
+    localStorage.removeItem(LOCAL_SESSION_KEY); return {ok: true};
+  }
+  const username = String(body.username || '').trim();
+  const key = username.toLocaleLowerCase('vi');
+  const passwordHash = await digest(String(body.password || ''));
+  if (path.endsWith('/register')) {
+    if (!/^[\p{L}\p{N}_-]{3,24}$/u.test(username)) throw new Error('Tên tài khoản cần 3–24 ký tự.');
+    if (String(body.password || '').length < 8) throw new Error('Mật khẩu cần ít nhất 8 ký tự.');
+    if (users[key]) throw new Error('Tên tài khoản đã tồn tại trên thiết bị này.');
+    const id = Math.abs(Array.from(key).reduce((sum, char) => ((sum * 31) + char.charCodeAt(0)) | 0, 7));
+    users[key] = {id, username, passwordHash};
+    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
+    localStorage.setItem(LOCAL_SESSION_KEY, key);
+    return {user: {id, username}};
+  }
+  const user = users[key];
+  if (!user || user.passwordHash !== passwordHash) throw new Error('Sai tài khoản hoặc mật khẩu.');
+  localStorage.setItem(LOCAL_SESSION_KEY, key);
+  return {user: {id: user.id, username: user.username}};
+}
+
 async function api(path: string, init?: RequestInit) {
-  const response = await fetch(path, {
-    ...init,
-    headers: {'Content-Type': 'application/json', ...(init?.headers || {})},
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || 'Yêu cầu thất bại.');
-  return body;
+  try {
+    const response = await fetch(path, {
+      ...init,
+      headers: {'Content-Type': 'application/json', ...(init?.headers || {})},
+    });
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) throw new Error('BACKEND_UNAVAILABLE');
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'Yêu cầu thất bại.');
+    return body;
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'BACKEND_UNAVAILABLE' && !error.message.includes('fetch')) throw error;
+    return localAuth(path, init);
+  }
 }
 
 export function PlayerPortal() {
@@ -80,14 +131,14 @@ export function PlayerPortal() {
         <input required minLength={8} maxLength={128} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mật khẩu (ít nhất 8 ký tự)" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3" />
         {error && <p className="text-sm text-red-400">{error}</p>}
         <button disabled={busy} className="w-full rounded-lg bg-emerald-600 py-3 font-bold disabled:opacity-50">{busy ? 'Đang xử lý...' : mode === 'login' ? 'Đăng nhập & chơi' : 'Tạo tài khoản & chơi'}</button>
-        <p className="flex items-center gap-2 text-xs text-zinc-500"><ShieldCheck className="w-4 h-4" /> Mật khẩu được băm, không lưu dạng văn bản.</p>
+        <p className="flex items-center gap-2 text-xs text-zinc-500"><ShieldCheck className="w-4 h-4" /> Có backend: tài khoản lưu trên server. Bản web tĩnh: tài khoản và save lưu riêng trên thiết bị.</p>
       </form>
     </main>
   );
 
   return <main className="min-h-screen bg-zinc-100 text-zinc-900 p-3">
     <header className="mb-3 flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-3">
-      <div><strong>Ngọc Rồng Web</strong><span className="ml-3 text-sm text-zinc-500">Tài khoản: {account.username}</span></div>
+      <div><strong>Ngọc Rồng Web</strong><span className="ml-3 text-sm text-zinc-500">Tài khoản: {account.username}</span><a href="/studio" className="ml-3 text-sm text-blue-600">Mở Studio</a></div>
       <button onClick={async () => { await api('/api/auth/logout', {method: 'POST'}); setAccount(null); }} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"><LogOut className="w-4 h-4" /> Đăng xuất</button>
     </header>
     {busy && <div className="grid min-h-[60vh] place-items-center"><Loader2 className="animate-spin" /></div>}
