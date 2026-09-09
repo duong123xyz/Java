@@ -1,18 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  CheckCircle2,
+  Boxes,
   Bug,
+  CheckCircle2,
   Gauge,
   Heart,
   Loader2,
   MapPinned,
+  PackagePlus,
+  Save,
   Search,
   Swords,
+  Trash2,
   Zap,
 } from 'lucide-react';
 import { LoadedJarSession } from '../../types/jar';
 import { JarImagePreview } from '../map/JarImagePreview';
+import { analyzeItemTables } from '../../services/itemDataService';
 import {
   analyzeMobs,
   getDirtyMobCount,
@@ -25,6 +30,12 @@ import {
   resetMobDraft,
   setMobDraft,
 } from '../../services/mobDataService';
+import {
+  deleteMobDropRule,
+  getMobDropRules,
+  MobDropRule,
+  upsertMobDropRule,
+} from '../../services/mobDropDraftService';
 
 interface MobPanelProps {
   session: LoadedJarSession;
@@ -32,9 +43,35 @@ interface MobPanelProps {
 }
 
 type SpawnFilter = 'all' | 'used' | 'unused';
+type NumericMobDraftKey = Exclude<keyof MobDraft, 'name'>;
+
+interface ItemLookupEntry {
+  name: string;
+  iconId: string;
+}
 
 function formatNumber(value: number): string {
   return Number.isFinite(value) ? value.toLocaleString('vi-VN') : '0';
+}
+
+function clampNumber(value: number, min: number, max: number, fallback = min): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, value));
+}
+
+function createBlankDropRule(mobId: number): MobDropRule {
+  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return {
+    sourceType: 'mob',
+    sourceId: mobId,
+    ruleId: `custom-${suffix}`,
+    itemId: 14,
+    chancePercent: 10,
+    quantityMin: 1,
+    quantityMax: 1,
+    enabled: true,
+    note: '',
+  };
 }
 
 export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
@@ -46,6 +83,11 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   const [spawnFilter, setSpawnFilter] = useState<SpawnFilter>('all');
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
+
+  const [dropRules, setDropRules] = useState<MobDropRule[]>([]);
+  const [savedRuleId, setSavedRuleId] = useState<string | null>(null);
+
+  const [itemLookup, setItemLookup] = useState<Map<string, ItemLookupEntry>>(new Map());
 
   const load = async () => {
     setLoading(true);
@@ -67,10 +109,38 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   }, [session]);
 
   useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const analysis = session.itemAnalysis ?? (await analyzeItemTables(session));
+        session.itemAnalysis = analysis;
+        if (cancelled) return;
+        const lookup = new Map<string, ItemLookupEntry>();
+        for (const item of analysis.items) {
+          const id = String(item.id ?? '').trim();
+          if (!id || lookup.has(id)) continue;
+          lookup.set(id, {
+            name: String(item.name || `Item #${id}`),
+            iconId: String(item.iconId || ''),
+          });
+        }
+        setItemLookup(lookup);
+      } catch (err) {
+        console.warn('[MobPanel] Không dựng được item lookup:', err);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
     if (!snapshot) return;
     void revision;
     onDraftsUpdated?.(getDirtyMobCount(session, snapshot.mobs));
   }, [session, snapshot, revision, onDraftsUpdated]);
+
 
   const visibleMobs = useMemo(() => {
     if (!snapshot) return [];
@@ -85,7 +155,10 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
         mob.name.toLowerCase().includes(q) ||
         String(mob.id).includes(q) ||
         String(mob.type).includes(q) ||
-        mob.maps.some((usage) => usage.mapName.toLowerCase().includes(q) || String(usage.mapId).includes(q))
+        mob.maps.some(
+          (usage) =>
+            usage.mapName.toLowerCase().includes(q) || String(usage.mapId).includes(q)
+        )
       );
     });
   }, [snapshot, query, dirtyOnly, spawnFilter, session, revision]);
@@ -99,6 +172,15 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
       null
     );
   }, [snapshot, selectedRow, visibleMobs]);
+
+  useEffect(() => {
+    if (!selectedMob) {
+      setDropRules([]);
+      return;
+    }
+    setDropRules(getMobDropRules(session, selectedMob.id));
+    setSavedRuleId(null);
+  }, [session, selectedMob?.id]);
 
   if (loading) {
     return (
@@ -134,7 +216,7 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
 
   const dirtyCount = getDirtyMobCount(session, snapshot.mobs);
   const draft = selectedMob ? getMobDraft(session, selectedMob) : null;
-  const dirty = selectedMob && draft ? isMobDraftDirty(selectedMob, draft) : false;
+  const dirty = Boolean(selectedMob && draft && isMobDraftDirty(selectedMob, draft));
   const usedMobCount = snapshot.mobs.filter((mob) => mob.totalSpawnCount > 0).length;
 
   const saveDraft = (next: MobDraft) => {
@@ -143,9 +225,39 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
     setRevision((value) => value + 1);
   };
 
-  const applyNumber = (key: keyof MobDraft, value: number) => {
+  const applyNumber = (key: NumericMobDraftKey, value: number) => {
     if (!draft) return;
-    saveDraft({ ...draft, [key]: value });
+    saveDraft({ ...draft, [key]: value } as MobDraft);
+  };
+
+  const updateDropRule = (ruleId: string, patch: Partial<MobDropRule>) => {
+    setSavedRuleId(null);
+    setDropRules((current) =>
+      current.map((rule) =>
+        rule.ruleId === ruleId ? { ...rule, ...patch } : rule
+      )
+    );
+  };
+
+  const addDropRule = () => {
+    if (!selectedMob) return;
+    setSavedRuleId(null);
+    setDropRules((current) => [...current, createBlankDropRule(selectedMob.id)]);
+  };
+
+  const saveDropRule = (rule: MobDropRule) => {
+    if (!selectedMob) return;
+    const saved = upsertMobDropRule(session, selectedMob.id, rule);
+    setDropRules(getMobDropRules(session, selectedMob.id));
+    setSavedRuleId(saved.ruleId);
+    window.setTimeout(() => setSavedRuleId((current) => current === saved.ruleId ? null : current), 1200);
+  };
+
+  const removeDropRule = (rule: MobDropRule) => {
+    if (!selectedMob) return;
+    deleteMobDropRule(session, selectedMob.id, rule.ruleId);
+    setDropRules((current) => current.filter((item) => item.ruleId !== rule.ruleId));
+    setSavedRuleId(null);
   };
 
   return (
@@ -164,23 +276,28 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
               <Chip>a/a/a/A.u</Chip>
               {dirtyCount > 0 && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-mono">
-                  {dirtyCount} nháp
+                  {dirtyCount} nháp template
+                </span>
+              )}
+              {selectedMob && (
+                <span className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 text-[10px] font-mono">
+                  {dropRules.length} rule drop
                 </span>
               )}
             </div>
             <div className="text-[10px] text-zinc-500 mt-0.5">
-              Xem sprite quái thật, thống kê map xuất hiện, chỉnh HP / range / speed / damage% / tiềm năng% nhanh ngay trong panel.
+              Chỉnh template quái + map xuất hiện + cấu hình vật phẩm rơi riêng từng mob.
             </div>
           </div>
         </div>
         <div className="hidden xl:flex items-center gap-1.5 text-[10px] text-emerald-600 font-mono">
           <CheckCircle2 className="w-3.5 h-3.5" />
-          Test nháp writer: a/a/a/A.u
+          Template writer: a/a/a/A.u
         </div>
       </div>
 
       <div className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
-        Nháp template quái giờ được patch thật vào <strong>a/a/a/A.u</strong> khi Test Workspace/Test nháp. Spawn cụ thể từng map (level/HP/vị trí) vẫn chỉnh riêng trong panel <strong>Map</strong>.
+        Chọn một quái rồi vào <strong>Vật phẩm rơi</strong> để thêm Item ID, tỷ lệ và số lượng. Không cần tài khoản admin hay backend; rule được lưu riêng theo JAR trong trình duyệt.
       </div>
 
       <div className="min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-2">
@@ -282,29 +399,28 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                       <Chip>mob #{selectedMob.id}</Chip>
                       <Chip>{getMobTypeLabel(selectedMob.type)}</Chip>
                       <Chip>{selectedMob.maps.length} map</Chip>
+                      <Chip>{dropRules.length} rule drop</Chip>
                       {dirty && (
                         <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-mono">
-                          Đang có nháp
+                          Đang có nháp template
                         </span>
                       )}
                     </div>
                     <div className="text-[11px] text-zinc-500 mt-1">
-                      Dữ liệu gốc nằm trong <strong>a/a/a/A.u</strong>. Sprite preview lấy trực tiếp từ <strong>x1/mob/{selectedMob.id}/img.png</strong>.
+                      Template: <strong>a/a/a/A.u</strong> · Sprite: <strong>x1/mob/{selectedMob.id}/img.png</strong>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMobDraft(session, selectedMob, resetMobDraft(session, selectedMob));
-                        setRevision((value) => value + 1);
-                      }}
-                      className="px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-medium cursor-pointer"
-                    >
-                      Trả về gốc
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetMobDraft(session, selectedMob);
+                      setRevision((value) => value + 1);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-medium cursor-pointer"
+                  >
+                    Trả template về gốc
+                  </button>
                 </div>
               </div>
 
@@ -353,44 +469,67 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                           value={draft.name}
                           onChange={(value) => saveDraft({ ...draft, name: value })}
                         />
-                        <LabeledNumberInput
-                          label="HP"
-                          value={draft.hp}
-                          onChange={(value) => applyNumber('hp', value)}
-                        />
-                        <LabeledNumberInput
-                          label="Range move"
-                          value={draft.rangeMove}
-                          onChange={(value) => applyNumber('rangeMove', value)}
-                        />
-                        <LabeledNumberInput
-                          label="Speed"
-                          value={draft.speed}
-                          onChange={(value) => applyNumber('speed', value)}
-                        />
-                        <LabeledNumberInput
-                          label="Dart Type"
-                          value={draft.dartType}
-                          onChange={(value) => applyNumber('dartType', value)}
-                        />
-                        <LabeledNumberInput
-                          label="% Damage"
-                          value={draft.percentDamage}
-                          onChange={(value) => applyNumber('percentDamage', value)}
-                        />
-                        <LabeledNumberInput
-                          label="% Tiềm năng"
-                          value={draft.percentTiemNang}
-                          onChange={(value) => applyNumber('percentTiemNang', value)}
-                        />
+                        <LabeledNumberInput label="HP" value={draft.hp} onChange={(value) => applyNumber('hp', value)} />
+                        <LabeledNumberInput label="Range move" value={draft.rangeMove} onChange={(value) => applyNumber('rangeMove', value)} />
+                        <LabeledNumberInput label="Speed" value={draft.speed} onChange={(value) => applyNumber('speed', value)} />
+                        <LabeledNumberInput label="Dart Type" value={draft.dartType} onChange={(value) => applyNumber('dartType', value)} />
+                        <LabeledNumberInput label="% Damage" value={draft.percentDamage} onChange={(value) => applyNumber('percentDamage', value)} />
+                        <LabeledNumberInput label="% Tiềm năng" value={draft.percentTiemNang} onChange={(value) => applyNumber('percentTiemNang', value)} />
                         <ReadOnlyField label="TYPE gốc" value={String(selectedMob.type)} />
                         <ReadOnlyField label="Tổng spawn" value={String(selectedMob.totalSpawnCount)} />
                       </div>
                     </SectionCard>
 
                     <SectionCard
+                      title="Vật phẩm rơi"
+                      subtitle={`Drop riêng cho mob #${selectedMob.id}. Mỗi item là một rule độc lập; một lần giết có thể trúng nhiều rule.`}
+                    >
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-800">
+                        <strong>Mob Drop Editor:</strong> cấu hình bên dưới được lưu theo đúng JAR đang mở. Đây là dữ liệu drop riêng từng mob; writer runtime vào bytecode a/a/aa sẽ được nối ở bước tiếp theo, nên panel không đánh dấu giả là đã patch JAR.
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Boxes className="w-4 h-4 text-blue-600" />
+                          <div>
+                            <div className="text-[11px] font-semibold text-zinc-800">Danh sách item rơi</div>
+                            <div className="text-[9px] text-zinc-500">{dropRules.length} rule · nhập Item ID, panel tự hiện tên từ Item database của JAR</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addDropRule}
+                          className="px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[10px] font-semibold text-blue-700 cursor-pointer flex items-center gap-1"
+                        >
+                          <PackagePlus className="w-3.5 h-3.5" />
+                          Thêm vật phẩm rơi
+                        </button>
+                      </div>
+
+                      {dropRules.length === 0 ? (
+                        <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/40 px-4 py-6 text-center text-[11px] text-blue-700">
+                          Mob #{selectedMob.id} chưa có custom drop. Bấm <strong>Thêm vật phẩm rơi</strong> để tạo rule đầu tiên.
+                        </div>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          {dropRules.map((rule) => (
+                            <DropRuleEditor
+                              key={rule.ruleId}
+                              rule={rule}
+                              item={itemLookup.get(String(rule.itemId))}
+                              saved={savedRuleId === rule.ruleId}
+                              onChange={(patch) => updateDropRule(rule.ruleId, patch)}
+                              onSave={() => saveDropRule(rule)}
+                              onDelete={() => removeDropRule(rule)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </SectionCard>
+
+                    <SectionCard
                       title="Map xuất hiện"
-                      subtitle="Danh sách map đang có mob này spawn. Dùng để rà soát nhanh độ ảnh hưởng trước khi tăng chỉ số."
+                      subtitle="Danh sách map đang có mob này spawn. Spawn level/HP/vị trí vẫn chỉnh ở panel Map."
                     >
                       {selectedMob.maps.length === 0 ? (
                         <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[11px] text-zinc-500">
@@ -410,6 +549,108 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
             </>
           )}
         </section>
+      </div>
+    </div>
+  );
+}
+
+function DropRuleEditor({
+  rule,
+  item,
+  saved,
+  onChange,
+  onSave,
+  onDelete,
+}: {
+  rule: MobDropRule;
+  item?: ItemLookupEntry;
+  saved: boolean;
+  onChange: (patch: Partial<MobDropRule>) => void;
+  onSave: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className={`rounded-xl border p-3 ${rule.enabled ? 'border-blue-200 bg-blue-50/30' : 'border-zinc-200 bg-zinc-50 opacity-80'}`}>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-semibold text-zinc-900">
+              {item?.name || `Item #${rule.itemId}`}
+            </span>
+            <span className="px-1.5 py-0.5 rounded-full border border-zinc-200 bg-white text-[9px] font-mono text-zinc-500">
+              ID {rule.itemId}
+            </span>
+            <span className="px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-[9px] font-mono text-blue-700">
+              {rule.chancePercent}% · {rule.quantityMin === rule.quantityMax ? `x${rule.quantityMin}` : `x${rule.quantityMin}-${rule.quantityMax}`}
+            </span>
+          </div>
+          <div className="text-[9px] text-zinc-500 mt-1 font-mono">ruleId: {rule.ruleId}</div>
+        </div>
+
+        <label className="flex items-center gap-1.5 text-[10px] text-zinc-600 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={rule.enabled}
+            onChange={(event) => onChange({ enabled: event.target.checked })}
+          />
+          Bật rule
+        </label>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+        <LabeledNumberInput
+          label="Item ID"
+          value={rule.itemId}
+          onChange={(value) => onChange({ itemId: Math.max(0, Math.round(value)) })}
+        />
+        <LabeledNumberInput
+          label="Tỷ lệ %"
+          value={rule.chancePercent}
+          step="0.01"
+          onChange={(value) => onChange({ chancePercent: clampNumber(value, 0, 100, 0) })}
+        />
+        <LabeledNumberInput
+          label="SL min"
+          value={rule.quantityMin}
+          onChange={(value) =>
+            onChange({
+              quantityMin: Math.max(1, Math.round(value || 1)),
+              quantityMax: Math.max(Math.max(1, Math.round(value || 1)), rule.quantityMax),
+            })
+          }
+        />
+        <LabeledNumberInput
+          label="SL max"
+          value={rule.quantityMax}
+          onChange={(value) => onChange({ quantityMax: Math.max(rule.quantityMin, Math.round(value || rule.quantityMin)) })}
+        />
+      </div>
+
+      <div className="mt-2 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] gap-2">
+        <LabeledInput
+          label="Ghi chú"
+          value={rule.note || ''}
+          onChange={(value) => onChange({ note: value })}
+          placeholder="Ghi chú cho rule này"
+        />
+        <div className="flex items-end gap-1.5">
+          <button
+            type="button"
+            onClick={onSave}
+            className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1"
+          >
+            {saved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+            {saved ? 'Đã lưu' : 'Lưu'}
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-700 text-[10px] font-semibold cursor-pointer flex items-center gap-1"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Xóa
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -477,18 +718,21 @@ function LabeledInput({
   label,
   value,
   onChange,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  placeholder?: string;
 }) {
   return (
     <label className="block">
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
       <input
         value={value}
+        placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[12px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+        className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
       />
     </label>
   );
@@ -498,19 +742,22 @@ function LabeledNumberInput({
   label,
   value,
   onChange,
+  step,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
+  step?: string;
 }) {
   return (
     <label className="block">
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
       <input
         type="number"
+        step={step}
         value={Number.isFinite(value) ? value : 0}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[12px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+        className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
       />
     </label>
   );
@@ -520,7 +767,7 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <div className="px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-100 text-[12px] text-zinc-700">
+      <div className="px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-100 text-[11px] text-zinc-700">
         {value}
       </div>
     </div>
