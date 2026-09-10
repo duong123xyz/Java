@@ -53,6 +53,7 @@ import {
   GenericMobDropRule,
   getGameMechanicsDraft,
   getGameMechanicsDirtyCount,
+  setGameMechanicsDraft,
 } from './gameMechanicsService';
 import { buildMechanicsPatches } from './mechanicsPatchService';
 import {
@@ -1193,7 +1194,27 @@ export async function buildDraftTestCandidate(
 
     const mechanicDraft = getGameMechanicsDraft(session);
     summary.mechanicDrafts = getGameMechanicsDirtyCount(mechanicDraft);
-    const mechanicsResult = await buildMechanicsPatches(session);
+
+    // IMPORTANT: mechanicsPatchService's legacy "global gold" writer multiplies
+    // the generic a/a/h drop wrapper, so it also scales non-gold items (eggs,
+    // custom drops, gems...) because they all eventually pass through the same
+    // method. Neutralize that one field while the legacy writers run, then apply
+    // our guarded gold-only runtime writer below. This keeps quantity=1 as exactly
+    // one item for every non-gold drop regardless of the configured gold multiplier.
+    let mechanicsResult: Awaited<ReturnType<typeof buildMechanicsPatches>>;
+    if (mechanicDraft.desiredGlobalGoldMultiplier !== 1) {
+      setGameMechanicsDraft(session, {
+        ...mechanicDraft,
+        desiredGlobalGoldMultiplier: 1,
+      });
+      try {
+        mechanicsResult = await buildMechanicsPatches(session);
+      } finally {
+        setGameMechanicsDraft(session, mechanicDraft);
+      }
+    } else {
+      mechanicsResult = await buildMechanicsPatches(session);
+    }
 
     // Flexible normal-gem quantity writer.
     // mechanicsPatchService can only replace the original 1-byte iconst_2 in-place,
@@ -1316,15 +1337,15 @@ export async function buildDraftTestCandidate(
       }
     }
 
-    // Large global-gold multiplier fallback. The legacy mechanics writer can
-    // only encode multipliers whose numerator/denominator fit immediate JVM pushes.
-    // For values such as x1,000,000 it returns "Không encode được hệ số vàng".
-    // Retarget the existing GTLFix.scaleGoldQty call to a tiny helper that performs
-    // the scale in long arithmetic and saturates to Java int max.
+    // Gold-only multiplier writer. We intentionally run this for EVERY non-1
+    // global-gold multiplier (small or huge). The helper first preserves the
+    // game's original GTLFix/TM behavior and then applies the user's multiplier
+    // only when itemId is one of the actual gold item IDs 188..190. Non-gold
+    // quantities are returned untouched, so custom item x1 can never become
+    // x10.000/x1.000.000 because of the gold setup.
     if (
       mechanicsResult.status !== 'FAILED' &&
-      mechanicDraft.desiredGlobalGoldMultiplier !== 1 &&
-      mechanicsResult.blockers.some((blocker) => blocker.field === 'Vàng global')
+      mechanicDraft.desiredGlobalGoldMultiplier !== 1
     ) {
       try {
         const multiplier = mechanicDraft.desiredGlobalGoldMultiplier;
@@ -1357,10 +1378,10 @@ export async function buildDraftTestCandidate(
           0,
           mechanicsResult.unsupportedDraftCount - removed
         );
-        if (removed > 0) mechanicsResult.appliedDraftCount += 1;
+        mechanicsResult.appliedDraftCount += 1;
         mechanicsResult.appliedPatchCount += patched.retargeted ? 2 : 1;
         mechanicsResult.diagnostics.push(
-          `Vàng global fallback: x${multiplier} qua PanelGlobalGoldRuntime, saturate int32.`
+          `Vàng global: x${multiplier} CHỈ item #188..190 qua PanelGlobalGoldRuntime; non-gold giữ nguyên quantity.`
         );
         if (mechanicsResult.blockers.length === 0) mechanicsResult.status = 'READY';
       } catch (error: unknown) {
@@ -3110,10 +3131,9 @@ function rationalMultiplier(value: number): { numerator: number; denominator: nu
 }
 
 /**
- * Branch-light helper for very large global-gold multipliers. It first calls
- * the game's original GTLFix.scaleGoldQty(), then scales in long arithmetic and
- * saturates at Integer.MAX_VALUE. This avoids both the old shortestPush limit
- * and int-overflow for x1,000,000 style values.
+ * Gold-only helper for every non-1 global multiplier. It first calls the game's
+ * original GTLFix.scaleGoldQty(), then applies the editor multiplier only to
+ * item IDs 188..190 and saturates at Integer.MAX_VALUE.
  */
 function buildGlobalGoldHelper(
   targetClass: ClassFileInfo,
@@ -3128,11 +3148,37 @@ function buildGlobalGoldHelper(
   const codeName = cp.utf8('Code');
   const originalScaleRef = cp.methodRef('patch/GTLFix', 'scaleGoldQty', '(La/m;II)I');
 
+  // Important: a/a/h.a(mob,item,qty) is a GENERIC item-drop API. Every item,
+  // including eggs/gems/custom drops, eventually reaches the 5-arg wrapper that
+  // calls GTLFix.scaleGoldQty. The old panel multiplied the wrapper's qty without
+  // checking itemId, therefore a custom egg x1 could become x10.000/x1.000.000.
+  // Keep the game's original scale result in local3, and apply the panel's extra
+  // multiplier ONLY to the real gold item range 188..190.
   const code: number[] = [
-    0x2a, // aload_0
-    0x1b, // iload_1
-    0x1c, // iload_2
+    0x2a, // aload_0 mob
+    0x1b, // iload_1 itemId
+    0x1c, // iload_2 requested qty
     0xb8, (originalScaleRef >> 8) & 0xff, originalScaleRef & 0xff,
+    0x3e, // istore_3 original/game-scaled qty
+  ];
+
+  const returnOriginalBranches: number[] = [];
+
+  // if (itemId < 188) return originalQty;
+  code.push(0x1b, ...helperIntPush(cp, 188));
+  let branchPos = code.length;
+  code.push(0xa1, 0, 0); // if_icmplt
+  returnOriginalBranches.push(branchPos);
+
+  // if (itemId > 190) return originalQty;
+  code.push(0x1b, ...helperIntPush(cp, 190));
+  branchPos = code.length;
+  code.push(0xa3, 0, 0); // if_icmpgt
+  returnOriginalBranches.push(branchPos);
+
+  // Gold only: scale in long arithmetic to avoid int overflow.
+  code.push(
+    0x1d, // iload_3
     0x85, // i2l
     ...helperIntPush(cp, ratio.numerator),
     0x85, // i2l
@@ -3140,18 +3186,28 @@ function buildGlobalGoldHelper(
     ...helperIntPush(cp, ratio.denominator),
     0x85, // i2l
     0x6d, // ldiv
-    0x42, // lstore_3 (locals 3+4)
-    0x21, // lload_3
+    0x37, 0x04 // lstore 4 (locals 4+5)
+  );
+
+  // Saturate to Integer.MAX_VALUE.
+  code.push(
+    0x16, 0x04, // lload 4
     ...helperIntPush(cp, JAVA_INT_MAX),
     0x85, // i2l
-    0x94, // lcmp
-    0x9e, 0x00, 0x06, // ifle +6 -> lload_3
-    ...helperIntPush(cp, JAVA_INT_MAX),
-    0xac, // ireturn
-    0x21, // lload_3
-    0x88, // l2i
-    0xac, // ireturn
-  ];
+    0x94 // lcmp
+  );
+  const withinIntBranch = code.length;
+  code.push(0x9e, 0, 0); // ifle -> return scaled long as int
+  code.push(...helperIntPush(cp, JAVA_INT_MAX), 0xac); // ireturn max
+
+  const returnScaledTarget = code.length;
+  code.push(0x16, 0x04, 0x88, 0xac); // lload 4; l2i; ireturn
+
+  const returnOriginalTarget = code.length;
+  code.push(0x1d, 0xac); // iload_3; ireturn
+
+  patchBranch(code, withinIntBranch, returnScaledTarget);
+  for (const pos of returnOriginalBranches) patchBranch(code, pos, returnOriginalTarget);
 
   const cpBytes = cp.serialize();
   const codeBytes = new Uint8Array(code);
@@ -3161,9 +3217,9 @@ function buildGlobalGoldHelper(
   writeU2(codeView, 0, codeName);
   writeU4(codeView, 2, codeDataLength);
   let c = 6;
-  writeU2(codeView, c, 6); // max_stack (two longs + operands)
+  writeU2(codeView, c, 6); // max_stack
   c += 2;
-  writeU2(codeView, c, 5); // locals 0..2 args + long local3/4
+  writeU2(codeView, c, 6); // locals: mob,item,qty,originalQty,long4/5
   c += 2;
   writeU4(codeView, c, codeBytes.length);
   c += 4;
