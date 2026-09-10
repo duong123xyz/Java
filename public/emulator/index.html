@@ -47,9 +47,10 @@ const RESET_MODE = sp.get('reset') || 'rms';
 // Dùng đúng loader đang được freej2me-web upstream pin trong run.html.
 const CHEERPJ_LOADER = 'https://cjrtnc.leaningtech.com/20260317_2978/loader.js';
 
-const STAGE_TIMEOUT_MS = 45_000;
-const CORE_LOAD_TIMEOUT_MS = 45_000;
-const INIT_TIMEOUT_MS = 45_000;
+// 45s quá ngắn với CheerpJ cold-start trên Cloud Run/AI Studio.
+const STAGE_TIMEOUT_MS = 180_000;
+const CORE_LOAD_TIMEOUT_MS = 180_000;
+const INIT_TIMEOUT_MS = 90_000;
 
 const display = document.getElementById('display');
 const screenCtx = display.getContext('2d');
@@ -295,7 +296,6 @@ async function initializeRuntime(){
 
   log('info',`[3] cheerpjInit giống upstream; topLevel=${IS_TOP_LEVEL}; secure=${window.isSecureContext}`);
 
-  // Quan trọng: không ép version:8/status/debug khác upstream.
   await withTimeout(
     window.cheerpjInit({
       enableDebug: false,
@@ -307,46 +307,22 @@ async function initializeRuntime(){
   runtime.runtimeInitialized=true;
   log('info','[4] CheerpJ initialized.');
 
-  // AI Studio/Cloud Run có thể không hỗ trợ HTTP Range theo cách /app filesystem
-  // của CheerpJ cần. Fetch toàn bộ core bằng browser rồi mount vào /str để
-  // cheerpjRunLibrary không phải đọc JAR qua HTTP Range.
-  setStage('LOADING_RUNTIME','Đang nạp FreeJ2ME core vào /str...');
-  const coreResponse = await withTimeout(
-    fetch(CORE_HTTP_JAR, { cache: 'no-store' }),
-    20_000,
-    'fetch FreeJ2ME core'
-  );
-  if (!coreResponse.ok) {
-    throw new Error(`Không tải được ${CORE_HTTP_JAR}: HTTP ${coreResponse.status}`);
-  }
-
-  const coreBytes = new Uint8Array(
-    await withTimeout(coreResponse.arrayBuffer(), 20_000, 'read FreeJ2ME core bytes')
-  );
-  log('info',`[core] HTTP asset OK (${coreBytes.byteLength} bytes)`);
-
-  if (coreBytes.byteLength !== 972381) {
-    log('warn',`[core] Kích thước core khác upstream hiện tại: ${coreBytes.byteLength} bytes.`);
-  }
-
-  if (typeof window.cheerpjAddStringFile !== 'function') {
-    throw new Error('CheerpJ loader không cung cấp cheerpjAddStringFile; không thể dùng /str workaround.');
-  }
-
-  window.cheerpjAddStringFile(FREEJ2ME_STR_JAR, coreBytes);
-  log('info',`[5] Core mounted in CheerpJ /str: ${FREEJ2ME_STR_JAR}`);
-
-  setStage('LOADING_RUNTIME',`Loading FreeJ2ME from memory: ${FREEJ2ME_STR_JAR}`);
+  // Load theo đúng cơ chế upstream của FreeJ2ME/CheerpJ: JAR được phục vụ qua /app.
+  // Bản V5 chuyển core sang /str đã làm cheerpjRunLibrary treo trên runtime này.
+  // /app trước đó đã load thành công trên chính deployment này, nên không fallback sang /str nữa.
+  const libraryPath = '/app/emulator/core/freej2me-web.jar';
+  setStage('LOADING_RUNTIME', `Loading FreeJ2ME: ${libraryPath}`);
+  log('info', `[5] Loading FreeJ2ME directly from /app (upstream library mode): ${libraryPath}`);
   runtime.lib = await withTimeout(
-    window.cheerpjRunLibrary(FREEJ2ME_STR_JAR),
+    window.cheerpjRunLibrary(libraryPath),
     CORE_LOAD_TIMEOUT_MS,
-    'cheerpjRunLibrary(/str)'
+    'cheerpjRunLibrary(/app)'
   );
 
   runtime.FreeJ2ME=await runtime.lib.org.recompile.freej2me.FreeJ2ME;
   runtime.launcherUtil=await runtime.lib.pl.zb3.freej2me.launcher.LauncherUtil;
   runtime.freej2meLoaded=true;
-  setStage('RUNTIME_READY','FreeJ2ME ready từ /str memory JAR.');
+  setStage('RUNTIME_READY','FreeJ2ME ready.');
   log('info','[6] FreeJ2ME library ready.');
 }
 
@@ -373,12 +349,47 @@ async function detectAppId(jarPath,fileName){
   await runtime.launcherUtil.ensureAppId(loader,String(fileName||'game.jar'));
   return String(await loader.getAppId());
 }
+async function removeInstalledAppJar(appId){
+  const File=await runtime.lib.java.io.File;
+  const appJar=await new File(`${appId}/app.jar`);
+  let exists=false;
+  try{exists=Boolean(await appJar.exists())}catch{}
+  if(!exists)return;
+
+  let deleted=false;
+  try{deleted=Boolean(await appJar.delete())}catch(e){
+    log('warn',`Không xóa trực tiếp được ${appId}/app.jar: ${e?.message||e}`);
+  }
+  if(!deleted){
+    // FreeJ2ME initApp dùng Files.copy(..., [appId]/app.jar) KHÔNG có REPLACE_EXISTING.
+    // Nếu file cũ không xóa được thì gỡ app folder là fallback an toàn để lần chạy mới cài lại JAR.
+    log('warn',`Fallback uninstall ${appId} để tránh FileAlreadyExistsException.`);
+    await runtime.launcherUtil.uninstallApp(appId);
+  }else{
+    log('info',`[app] Removed stale ${appId}/app.jar before reinstall.`);
+  }
+}
+
 async function resetPersistentGameData(jarPath,fileName){
-  if(RESET_MODE==='none')return;
   const appId=await detectAppId(jarPath,fileName);
-  setStage('JAR_MOUNTED',`Reset test data: ${appId}...`);
-  if(RESET_MODE==='full')await runtime.launcherUtil.uninstallApp(appId);
-  else await runtime.launcherUtil.wipeAppData(appId);
+  runtime.appId=appId;
+  setStage('JAR_MOUNTED',`Chuẩn bị app: ${appId}...`);
+
+  if(RESET_MODE==='full'){
+    // full = xóa toàn bộ app + RMS/config trước khi FreeJ2ME cài lại JAR.
+    await runtime.launcherUtil.uninstallApp(appId);
+    log('info',`[app] Full reset ${appId}.`);
+    return;
+  }
+
+  if(RESET_MODE==='rms'){
+    // rms = chỉ xóa save/RMS, giữ config; app.jar vẫn phải xóa để initApp có thể copy JAR mới.
+    await runtime.launcherUtil.wipeAppData(appId);
+  }
+
+  // Kể cả reset=none vẫn phải bỏ app.jar cũ. FreeJ2ME upstream dùng Files.copy
+  // không có REPLACE_EXISTING nên lần chạy thứ hai sẽ crash nếu file này còn tồn tại.
+  await removeInstalledAppJar(appId);
 }
 async function startMidlet(jarPath){
   setStage('STARTING_MIDLET','Starting MIDlet...');
@@ -435,9 +446,8 @@ async function bootstrap(){
     return;
   }
 
-  post('IFRAME_READY',{runnerVersion:'phase16-memory-core',runtimeInfo:runtimeInfo()});
-  setStage('IDLE','Runner phase16 sẵn sàng. Core sẽ được nạp từ bộ nhớ /str.');
-
+  post('IFRAME_READY',{runnerVersion:'phase18-appjar-reinstall',runtimeInfo:runtimeInfo()});
+  setStage('IDLE','Runner sẵn sàng.');
 }
 bootstrap();
 </script>

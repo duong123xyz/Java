@@ -68,13 +68,32 @@ export interface GameMechanicsSnapshot {
   mobDrops: DropMechanic[];
 }
 
+export interface GenericMobDropRule {
+  id: string;
+  enabled: boolean;
+  itemId: number;
+  quantity: number;
+  chancePercent: number;
+  /** null = mọi loại quái. Có thể dùng cả mob type âm như -239. */
+  mobType: number | null;
+  /** null = mọi map. */
+  mapId: number | null;
+}
+
 export interface GameMechanicsDraft {
   tnsmMultiplier: number;
+  /**
+   * true  = giữ nguyên cơ chế game gốc: chênh level làm giảm TNSM và có thể ép còn +1.
+   * false = bỏ toàn bộ penalty theo chênh level trong tm$reward để reward bám theo damage/các multiplier.
+   */
+  tnsmLevelLimitEnabled: boolean;
   powerCapMultiplier: number;
   treasureRewardMultiplier: number;
   desiredGlobalGoldMultiplier: number;
   dropChancePercent: Record<string, number>;
   dropQuantity: Record<string, number>;
+  /** Drop custom chạy ở hook customDrop cho mọi mob chết. */
+  customMobDrops: GenericMobDropRule[];
 }
 
 const DEFAULT_DROP_CHANCES: Record<string, number> = {
@@ -115,11 +134,13 @@ const DEFAULT_DROP_QUANTITY: Record<string, number> = {
 
 const DEFAULT_DRAFT: GameMechanicsDraft = {
   tnsmMultiplier: 1,
+  tnsmLevelLimitEnabled: true,
   powerCapMultiplier: 1,
   treasureRewardMultiplier: 1,
   desiredGlobalGoldMultiplier: 1,
   dropChancePercent: { ...DEFAULT_DROP_CHANCES },
   dropQuantity: { ...DEFAULT_DROP_QUANTITY },
+  customMobDrops: [],
 };
 
 const draftStore = new WeakMap<LoadedJarSession, GameMechanicsDraft>();
@@ -212,15 +233,12 @@ function findRawConstantLoadOffset(method: any, cp: any[], target: number): numb
   const hi = (cpIndex >> 8) & 0xff;
   const lo = cpIndex & 0xff;
 
-  // long/double are loaded with ldc2_w (0x14). This fallback is needed because
-  // the generic bytecode decoder in the current repo does not decode opcode 0x14 yet.
   for (let offset = 0; offset + 2 < code.length; offset++) {
     if (code[offset] === 0x14 && code[offset + 1] === hi && code[offset + 2] === lo) {
       return offset;
     }
   }
 
-  // Numeric Integer/Float constants can be loaded with ldc_w / ldc.
   for (let offset = 0; offset + 2 < code.length; offset++) {
     if (code[offset] === 0x13 && code[offset + 1] === hi && code[offset + 2] === lo) {
       return offset;
@@ -640,7 +658,7 @@ async function analyzeMobDrops(
       editableQuantity: true,
       notes: [
         'Đây là “Ngọc” dạng item drop của client, không phải mọi phép cộng gem trực tiếp vào tài khoản.',
-        'Muốn đổi tỷ lệ <100% cần writer chèn/khôi phục nhánh so sánh RNG thay vì chỉ sửa một constant.',
+        'Writer hiện tại có thể phục hồi branch RNG cho rule này; giá trị thực tế sau rewrite được kiểm tra lại khi export.',
       ],
     },
     {
@@ -652,323 +670,63 @@ async function analyzeMobDrops(
       group: 'common',
       condition: 'Quái thường đi qua customDrop; random(30) < 1.',
       items: [itemRef(itemAnalysis, 224)],
-      source: source(
-        'a/a/aa',
-        'customDrop',
-        purpleDirect.found,
-        'w(30) < 1 → item #224',
-        customDrop?.descriptor,
-        purpleDirect.offset
-      ),
+      source: source('a/a/aa', 'customDrop', purpleDirect.found, 'w(30) < 1 → item #224', customDrop?.descriptor, purpleDirect.offset),
       editableChance: true,
       editableQuantity: true,
     },
     {
-      key: 'dragonBall5',
-      title: 'Ngọc Rồng 5 sao',
-      description: 'Một nhánh drop phổ thông trong customDrop.',
-      baseChancePercent: 5,
-      quantity: 1,
-      group: 'common',
-      condition: 'random(100) < 5.',
-      items: [itemRef(itemAnalysis, 18)],
-      source: source(
-        'a/a/aa',
-        'customDrop',
-        db5Direct.found,
-        'w(100) < 5 → item #18',
-        customDrop?.descriptor,
-        db5Direct.offset
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'dragonBall5', title: 'Ngọc Rồng 5 sao', description: 'Một nhánh drop phổ thông trong customDrop.', baseChancePercent: 5, quantity: 1, group: 'common', condition: 'random(100) < 5.', items: [itemRef(itemAnalysis, 18)], source: source('a/a/aa','customDrop',db5Direct.found,'w(100) < 5 → item #18',customDrop?.descriptor,db5Direct.offset), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'dragonBall7',
-      title: 'Ngọc Rồng 7 sao',
-      description: 'Một nhánh drop phổ thông trong customDrop.',
-      baseChancePercent: 2,
-      quantity: 1,
-      group: 'common',
-      condition: 'random(100) < 2.',
-      items: [itemRef(itemAnalysis, 20)],
-      source: source(
-        'a/a/aa',
-        'customDrop',
-        db7Direct.found,
-        'w(100) < 2 → item #20',
-        customDrop?.descriptor,
-        db7Direct.offset
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'dragonBall7', title: 'Ngọc Rồng 7 sao', description: 'Một nhánh drop phổ thông trong customDrop.', baseChancePercent: 2, quantity: 1, group: 'common', condition: 'random(100) < 2.', items: [itemRef(itemAnalysis, 20)], source: source('a/a/aa','customDrop',db7Direct.found,'w(100) < 2 → item #20',customDrop?.descriptor,db7Direct.offset), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'mabuEgg',
-      title: 'Quả Trứng từ mob #70',
-      description: 'Drop riêng trong patch/SA.',
-      baseChancePercent: 5,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Chỉ khi mob.cG == 70; random(100) < 5.',
-      items: [itemRef(itemAnalysis, 568)],
-      source: source(
-        'patch/SA',
-        'maybeDropMabuEgg',
-        eggDirect.found,
-        'mob type 70 + w(100) < 5 → item #568',
-        mabuEgg?.descriptor,
-        eggDirect.offset
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'mabuEgg', title: 'Quả Trứng từ mob #70', description: 'Drop riêng trong patch/SA.', baseChancePercent: 5, quantity: 1, group: 'conditional', condition: 'Chỉ khi mob.cG == 70; random(100) < 5.', items: [itemRef(itemAnalysis, 568)], source: source('patch/SA','maybeDropMabuEgg',eggDirect.found,'mob type 70 + w(100) < 5 → item #568',mabuEgg?.descriptor,eggDirect.offset), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'activationLevel1',
-      title: 'Trang bị kích hoạt cấp 1',
-      description: 'Patch SA tạo một món trang bị kích hoạt ngẫu nhiên phù hợp hành tinh.',
-      baseChancePercent: 0.1,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Map 1–3 / 8–10 / 15–17 và mob HP đúng 200 / 500 / 600. Base 10/10.000; nếu có item #1635 thì 12/10.000.',
-      items: [],
-      source: source(
-        'patch/SA',
-        'maybeDropLevel1Activation',
-        activationVerified,
-        activationVerified
-          ? 'w(10000) < 10; có Cỏ bốn lá #1635 → threshold 12'
-          : 'Không xác minh đủ chuỗi 10000 / 10 / 12 / 1635',
-        activation?.descriptor,
-        activation ? findNumericOffset(activation, saCp, 10000) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: false,
-      notes: ['Tỷ lệ khi có Cỏ bốn lá là 0,12%, cao hơn base 0,10%.'],
+      key: 'activationLevel1', title: 'Trang bị kích hoạt cấp 1', description: 'Patch SA tạo một món trang bị kích hoạt ngẫu nhiên phù hợp hành tinh.', baseChancePercent: 0.1, quantity: 1, group: 'conditional', condition: 'Map 1–3 / 8–10 / 15–17 và mob HP đúng 200 / 500 / 600. Base 10/10.000; nếu có item #1635 thì 12/10.000.', items: [], source: source('patch/SA','maybeDropLevel1Activation',activationVerified,activationVerified ? 'w(10000) < 10; có Cỏ bốn lá #1635 → threshold 12' : 'Không xác minh đủ chuỗi 10000 / 10 / 12 / 1635',activation?.descriptor,activation ? findNumericOffset(activation, saCp, 10000) : undefined), editableChance: true, editableQuantity: false, notes: ['Tỷ lệ khi có Cỏ bốn lá là 0,12%, cao hơn base 0,10%.'],
     },
     {
-      key: 'upgradeStoneU',
-      title: 'Đá nâng cấp ở map 105–110',
-      description: 'Chọn ngẫu nhiên một trong 4 loại đá.',
-      baseChancePercent: 20,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Chỉ map ID 105–110; random(100) < 20; sau đó random(4) chọn #220–223.',
-      items: [220, 221, 222, 223].map((id) => itemRef(itemAnalysis, id)),
-      source: source(
-        'a/a/aa',
-        'a',
-        upgradeVerified,
-        'U(map)=105..110; w(100) < 20; item = 220 + w(4)',
-        mainDrop?.descriptor,
-        mainDrop ? findNumericOffset(mainDrop, aaCp, 220) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'upgradeStoneU', title: 'Đá nâng cấp ở map 105–110', description: 'Chọn ngẫu nhiên một trong 4 loại đá.', baseChancePercent: 20, quantity: 1, group: 'conditional', condition: 'Chỉ map ID 105–110; random(100) < 20; sau đó random(4) chọn #220–223.', items: [220,221,222,223].map((id)=>itemRef(itemAnalysis,id)), source: source('a/a/aa','a',upgradeVerified,'U(map)=105..110; w(100) < 20; item = 220 + w(4)',mainDrop?.descriptor,mainDrop ? findNumericOffset(mainDrop,aaCp,220) : undefined), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'foodFullDivine',
-      title: 'Đồ ăn Bill khi mặc đủ Thần Linh',
-      description: 'Random một trong 5 món #663–667.',
-      baseChancePercent: 5,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Map 105–110 + cả 5 slot đầu đều có template ID trong 555–567 + random(100) < 5.',
-      items: [663, 664, 665, 666, 667].map((id) => itemRef(itemAnalysis, id)),
-      source: source(
-        'a/a/aa',
-        'a',
-        foodVerified,
-        'U(map) + full set 555..567 + w(100) < 5',
-        mainDrop?.descriptor,
-        mainDrop ? findNumericOffset(mainDrop, aaCp, 663) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'foodFullDivine', title: 'Đồ ăn Bill khi mặc đủ Thần Linh', description: 'Random một trong 5 món #663–667.', baseChancePercent: 5, quantity: 1, group: 'conditional', condition: 'Map 105–110 + cả 5 slot đầu đều có template ID trong 555–567 + random(100) < 5.', items: [663,664,665,666,667].map((id)=>itemRef(itemAnalysis,id)), source: source('a/a/aa','a',foodVerified,'U(map) + full set 555..567 + w(100) < 5',mainDrop?.descriptor,mainDrop ? findNumericOffset(mainDrop,aaCp,663) : undefined), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'rareU',
-      title: 'Drop hiếm ở map 105–110',
-      description: 'Nhánh c(mob) chọn item theo loại / cấp mob.',
-      baseChancePercent: 0.1,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Map ID 105–110; random(1000) < 1.',
-      items: [],
-      source: source(
-        'a/a/aa',
-        'a',
-        rareUVerified,
-        'U(map) + w(1000) < 1 → c(mob)',
-        mainDrop?.descriptor,
-        mainDrop ? findNumericOffset(mainDrop, aaCp, 1000) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'rareU', title: 'Drop hiếm ở map 105–110', description: 'Nhánh c(mob) chọn item theo loại / cấp mob.', baseChancePercent: 0.1, quantity: 1, group: 'conditional', condition: 'Map ID 105–110; random(1000) < 1.', items: [], source: source('a/a/aa','a',rareUVerified,'U(map) + w(1000) < 1 → c(mob)',mainDrop?.descriptor,mainDrop ? findNumericOffset(mainDrop,aaCp,1000) : undefined), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'crystalStar',
-      title: 'Sao pha lê',
-      description: 'Random #441–447 khi đủ điều kiện cải trang.',
-      baseChancePercent: 5,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Điều kiện trang bị slot 5 là template #461 + random(100) < 5.',
-      items: [441, 442, 443, 444, 445, 446, 447].map((id) => itemRef(itemAnalysis, id)),
-      source: source(
-        'a/a/aa',
-        'a',
-        starVerified,
-        'item slot 5 == #461 + w(100) < 5; item = 441 + w(7)',
-        mainDrop?.descriptor,
-        mainDrop ? findNumericOffset(mainDrop, aaCp, 441) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'crystalStar', title: 'Sao pha lê', description: 'Random #441–447 khi đủ điều kiện cải trang.', baseChancePercent: 5, quantity: 1, group: 'conditional', condition: 'Điều kiện trang bị slot 5 là template #461 + random(100) < 5.', items: [441,442,443,444,445,446,447].map((id)=>itemRef(itemAnalysis,id)), source: source('a/a/aa','a',starVerified,'item slot 5 == #461 + w(100) < 5; item = 441 + w(7)',mainDrop?.descriptor,mainDrop ? findNumericOffset(mainDrop,aaCp,441) : undefined), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'mysteryCapsule',
-      title: 'Viên Capsule kì bí',
-      description: 'Drop theo nhóm mob tương lai khi người chơi có máy dò.',
-      baseChancePercent: 100,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Mob type 58–65 + người chơi có item #379 “Máy dò Capsule kì bí”. Nhánh xác suất đang bị ép thành luôn cho qua.',
-      items: [itemRef(itemAnalysis, 380)],
-      source: source(
-        'a/a/aa',
-        'a',
-        capsuleDirect.found,
-        'mob 58..65 + item #379 → item #380; branch hiện tại cho qua 100% khi đủ điều kiện',
-        mainDrop?.descriptor,
-        capsuleDirect.offset
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'mysteryCapsule', title: 'Viên Capsule kì bí', description: 'Drop theo nhóm mob tương lai khi người chơi có máy dò.', baseChancePercent: 100, quantity: 1, group: 'conditional', condition: 'Mob type 58–65 + người chơi có item #379 “Máy dò Capsule kì bí”. Nhánh xác suất đang bị ép thành luôn cho qua.', items: [itemRef(itemAnalysis,380)], source: source('a/a/aa','a',capsuleDirect.found,'mob 58..65 + item #379 → item #380; branch hiện tại cho qua 100% khi đủ điều kiện',mainDrop?.descriptor,capsuleDirect.offset), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'questDragon7',
-      title: 'Ngọc Rồng 7 sao theo nhiệm vụ',
-      description: 'Một nhánh riêng trong bảng drop chính, không dùng RNG khi đủ điều kiện.',
-      baseChancePercent: 100,
-      quantity: 1,
-      group: 'conditional',
-      condition: 'Player yk == 8, an == 1 và mob type khớp hành tinh: Trái Đất #11 / Namek #12 / Xayda #10.',
-      items: [itemRef(itemAnalysis, 20)],
-      source: source(
-        'a/a/aa',
-        'a',
-        questDragon7Verified && questDragon7Direct.found,
-        'Điều kiện quest/hành tinh → item #20 qty=1, không có random trong nhánh này',
-        mainDrop?.descriptor,
-        questDragon7Direct.offset
-      ),
-      editableChance: true,
-      editableQuantity: true,
-      notes: ['Đây là drop theo trạng thái nhiệm vụ; chỉnh tỷ lệ cần chèn RNG mới vào nhánh vốn đang guaranteed.'],
+      key: 'questDragon7', title: 'Ngọc Rồng 7 sao theo nhiệm vụ', description: 'Một nhánh riêng trong bảng drop chính, không dùng RNG khi đủ điều kiện.', baseChancePercent: 100, quantity: 1, group: 'conditional', condition: 'Player yk == 8, an == 1 và mob type khớp hành tinh: Trái Đất #11 / Namek #12 / Xayda #10.', items: [itemRef(itemAnalysis,20)], source: source('a/a/aa','a',questDragon7Verified && questDragon7Direct.found,'Điều kiện quest/hành tinh → item #20 qty=1, không có random trong nhánh này',mainDrop?.descriptor,questDragon7Direct.offset), editableChance: true, editableQuantity: true, notes: ['Đây là drop theo trạng thái nhiệm vụ; chỉnh tỷ lệ cần chèn RNG mới vào nhánh vốn đang guaranteed.'],
     },
     {
-      key: 'specialMinus239Dragon',
-      title: 'Mob đặc biệt type -239: Ngọc Rồng 1–7 sao',
-      description: 'Nhánh customDrop dành riêng cho mob type âm đặc biệt.',
-      baseChancePercent: 100,
-      quantity: 1,
-      group: 'special',
-      condition: 'mob.cG == -239; luôn chọn ngẫu nhiên item #14 + random(7), tức Ngọc Rồng 1–7 sao.',
-      items: [14, 15, 16, 17, 18, 19, 20].map((id) => itemRef(itemAnalysis, id)),
-      source: source(
-        'a/a/aa',
-        'customDrop',
-        specialMinus239Verified,
-        'cG == -239 → item = 14 + w(7), qty=1',
-        customDrop?.descriptor,
-        customDrop ? findNumericOffset(customDrop, aaCp, -239) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'specialMinus239Dragon', title: 'Mob đặc biệt type -239: Ngọc Rồng 1–7 sao', description: 'Nhánh customDrop dành riêng cho mob type âm đặc biệt.', baseChancePercent: 100, quantity: 1, group: 'special', condition: 'mob.cG == -239; luôn chọn ngẫu nhiên item #14 + random(7), tức Ngọc Rồng 1–7 sao.', items: [14,15,16,17,18,19,20].map((id)=>itemRef(itemAnalysis,id)), source: source('a/a/aa','customDrop',specialMinus239Verified,'cG == -239 → item = 14 + w(7), qty=1',customDrop?.descriptor,customDrop ? findNumericOffset(customDrop,aaCp,-239) : undefined), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'specialMinus239Gear',
-      title: 'Mob type -239: trang bị Thần Linh phụ',
-      description: 'Sau Ngọc Rồng, mob đặc biệt còn roll thêm một món quần Thần Linh theo hành tinh.',
-      baseChancePercent: 10,
-      quantity: 1,
-      group: 'special',
-      condition: 'mob.cG == -239; random(100) < 10; random(3) chọn #556 / #558 / #560.',
-      items: [556, 558, 560].map((id) => itemRef(itemAnalysis, id)),
-      source: source(
-        'a/a/aa',
-        'customDrop',
-        specialMinus239Verified,
-        'w(100) < 10; w(3) chọn #556/#558/#560',
-        customDrop?.descriptor,
-        customDrop ? findNumericOffset(customDrop, aaCp, 100) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'specialMinus239Gear', title: 'Mob type -239: trang bị Thần Linh phụ', description: 'Sau Ngọc Rồng, mob đặc biệt còn roll thêm một món quần Thần Linh theo hành tinh.', baseChancePercent: 10, quantity: 1, group: 'special', condition: 'mob.cG == -239; random(100) < 10; random(3) chọn #556 / #558 / #560.', items: [556,558,560].map((id)=>itemRef(itemAnalysis,id)), source: source('a/a/aa','customDrop',specialMinus239Verified,'w(100) < 10; w(3) chọn #556/#558/#560',customDrop?.descriptor,customDrop ? findNumericOffset(customDrop,aaCp,100) : undefined), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'campGold',
-      title: 'Vàng mob doanh trại',
-      description: 'Mỗi mob doanh trại tạo một drop vàng cố định trước khi roll Ngọc Rồng.',
-      baseChancePercent: 100,
-      quantity: 100000,
-      group: 'special',
-      condition: 'Map ID 53–62; patch/TM.dropCampMobLoot gọi tm$drop5(item #190, quantity 100000).',
-      items: [itemRef(itemAnalysis, 190)],
-      source: source(
-        'patch/TM',
-        'dropCampMobLoot',
-        campVerified,
-        'item #190 “Vàng”, qty=100000, không có RNG bao quanh lệnh drop',
-        campLoot?.descriptor,
-        campLoot ? findNumericOffset(campLoot, tmCp, 100000) : undefined
-      ),
-      editableChance: true,
-      editableQuantity: true,
+      key: 'campGold', title: 'Vàng mob doanh trại', description: 'Mỗi mob doanh trại tạo một drop vàng cố định trước khi roll Ngọc Rồng.', baseChancePercent: 100, quantity: 100000, group: 'special', condition: 'Map ID 53–62; patch/TM.dropCampMobLoot gọi tm$drop5(item #190, quantity 100000).', items: [itemRef(itemAnalysis,190)], source: source('patch/TM','dropCampMobLoot',campVerified,'item #190 “Vàng”, qty=100000, không có RNG bao quanh lệnh drop',campLoot?.descriptor,campLoot ? findNumericOffset(campLoot,tmCp,100000) : undefined), editableChance: true, editableQuantity: true,
     },
     {
-      key: 'campDragonBalls',
-      title: 'Loot mob doanh trại (map 53–62)',
-      description: 'Ngoài vàng cố định, random một nhánh Ngọc Rồng.',
-      baseChancePercent: 70,
-      quantity: 1,
-      group: 'special',
-      condition: 'customDrop chuyển sang patch/TM.dropCampMobLoot khi map ID 53–62.',
-      items: [18, 19, 20].map((id) => itemRef(itemAnalysis, id)),
-      source: source(
-        'patch/TM',
-        'dropCampMobLoot',
-        campVerified,
-        'Vàng 100.000 luôn rơi; RNG 0..99: <10 #18, <40 #19, <70 #20, còn lại không có Ngọc Rồng',
-        campLoot?.descriptor,
-        campLoot ? findNumericOffset(campLoot, tmCp, 100000) : undefined
-      ),
-      editableChance: false,
-      distribution: [
-        { label: 'Ngọc Rồng 5 sao', chancePercent: 10, item: itemRef(itemAnalysis, 18) },
-        { label: 'Ngọc Rồng 6 sao', chancePercent: 30, item: itemRef(itemAnalysis, 19) },
-        { label: 'Ngọc Rồng 7 sao', chancePercent: 30, item: itemRef(itemAnalysis, 20) },
+      key: 'campDragonBalls', title: 'Loot mob doanh trại (map 53–62)', description: 'Ngoài vàng cố định, random một nhánh Ngọc Rồng.', baseChancePercent: 70, quantity: 1, group: 'special', condition: 'customDrop chuyển sang patch/TM.dropCampMobLoot khi map ID 53–62.', items: [18,19,20].map((id)=>itemRef(itemAnalysis,id)), source: source('patch/TM','dropCampMobLoot',campVerified,'Vàng 100.000 luôn rơi; RNG 0..99: <10 #18, <40 #19, <70 #20, còn lại không có Ngọc Rồng',campLoot?.descriptor,campLoot ? findNumericOffset(campLoot,tmCp,100000) : undefined), editableChance: false, distribution: [
+        { label: 'Ngọc Rồng 5 sao', chancePercent: 10, item: itemRef(itemAnalysis,18) },
+        { label: 'Ngọc Rồng 6 sao', chancePercent: 30, item: itemRef(itemAnalysis,19) },
+        { label: 'Ngọc Rồng 7 sao', chancePercent: 30, item: itemRef(itemAnalysis,20) },
         { label: 'Không rơi Ngọc Rồng', chancePercent: 30, item: null },
-      ],
-      notes: ['Mỗi mob doanh trại còn tạo một drop vàng với quantity 100.000 trước khi roll Ngọc Rồng.'],
+      ], notes: ['Mỗi mob doanh trại còn tạo một drop vàng với quantity 100.000 trước khi roll Ngọc Rồng.'],
     },
   ];
 }
 
-export async function analyzeGameMechanics(
-  session: LoadedJarSession
-): Promise<GameMechanicsSnapshot> {
+export async function analyzeGameMechanics(session: LoadedJarSession): Promise<GameMechanicsSnapshot> {
   const itemAnalysisPromise = ensureItemAnalysis(session);
-
-  const [
-    tnsmSource,
-    capSources,
-    treasureReward,
-    goldHook,
-    treasureGold,
-    itemAnalysis,
-  ] = await Promise.all([
+  const [tnsmSource, capSources, treasureReward, goldHook, treasureGold, itemAnalysis] = await Promise.all([
     findNumericConstant(session, 'a/a/aa', 'tm$reward', 0.0005),
     findAllCapSources(session, 1_000_000_000_000),
     detectTreasureFormula(session),
@@ -976,9 +734,7 @@ export async function analyzeGameMechanics(
     detectTreasureGold(session),
     itemAnalysisPromise,
   ]);
-
   const mobDrops = await analyzeMobDrops(session, itemAnalysis);
-
   return {
     tnsm: {
       baseHpCoefficient: 0.0005,
@@ -988,19 +744,13 @@ export async function analyzeGameMechanics(
         'Mob type 0 hoặc 117 ép base reward về 1.',
         'Nếu người chơi cao hơn mob quá 5 cấp thì reward bị ép về 1.',
         'Các trường hợp còn lại chia cho 1.25 + floor(|levelDiff| × 0.5).',
+        'tm$reward truyền cùng một reward vào a/a/V.a(player, reward, reward), nên sức mạnh và tiềm năng nhận cùng delta trước cap.',
         'Sau đó còn đi qua multiplier a/a/x.l(player), a/a/u.b(reward), a/a/x.d(player,reward) và cap trong a/a/V.',
       ],
     },
-    powerCap: {
-      baseCap: 1_000_000_000_000,
-      sources: capSources,
-    },
+    powerCap: { baseCap: 1_000_000_000_000, sources: capSources },
     treasureReward,
-    gold: {
-      globalMultiplierDetected: false,
-      hookSource: goldHook,
-      treasureOnlySource: treasureGold,
-    },
+    gold: { globalMultiplierDetected: goldHook.detected, hookSource: goldHook, treasureOnlySource: treasureGold },
     mobDrops,
   };
 }
@@ -1010,42 +760,62 @@ function cloneDraft(draft: GameMechanicsDraft): GameMechanicsDraft {
     ...draft,
     dropChancePercent: { ...draft.dropChancePercent },
     dropQuantity: { ...draft.dropQuantity },
+    customMobDrops: (draft.customMobDrops ?? []).map((rule) => ({ ...rule })),
   };
 }
 
 export function getGameMechanicsDraft(session: LoadedJarSession): GameMechanicsDraft {
   const existing = draftStore.get(session);
   if (existing) return cloneDraft(existing);
-
   const draft = cloneDraft(DEFAULT_DRAFT);
   draftStore.set(session, draft);
   return cloneDraft(draft);
 }
 
-export function setGameMechanicsDraft(
-  session: LoadedJarSession,
-  nextDraft: GameMechanicsDraft
-): void {
+export function setGameMechanicsDraft(session: LoadedJarSession, nextDraft: GameMechanicsDraft): void {
   const normalized: GameMechanicsDraft = {
     tnsmMultiplier: normalizeMultiplier(nextDraft.tnsmMultiplier),
+    // Backward compatible với draft cũ chưa có field này.
+    tnsmLevelLimitEnabled: nextDraft.tnsmLevelLimitEnabled !== false,
     powerCapMultiplier: normalizeMultiplier(nextDraft.powerCapMultiplier),
     treasureRewardMultiplier: normalizeMultiplier(nextDraft.treasureRewardMultiplier),
     desiredGlobalGoldMultiplier: normalizeMultiplier(nextDraft.desiredGlobalGoldMultiplier),
     dropChancePercent: {},
     dropQuantity: {},
+    customMobDrops: [],
   };
-
   for (const [key, defaultValue] of Object.entries(DEFAULT_DROP_CHANCES)) {
-    normalized.dropChancePercent[key] = normalizeChance(
-      nextDraft.dropChancePercent[key] ?? defaultValue
-    );
+    normalized.dropChancePercent[key] = normalizeChance(nextDraft.dropChancePercent[key] ?? defaultValue);
   }
   for (const [key, defaultValue] of Object.entries(DEFAULT_DROP_QUANTITY)) {
-    normalized.dropQuantity[key] = normalizeQuantity(
-      nextDraft.dropQuantity[key] ?? defaultValue
-    );
+    normalized.dropQuantity[key] = normalizeQuantity(nextDraft.dropQuantity[key] ?? defaultValue);
   }
 
+  const incomingCustom = Array.isArray(nextDraft.customMobDrops)
+    ? nextDraft.customMobDrops
+    : [];
+  normalized.customMobDrops = incomingCustom.slice(0, 100).map((rule, index) => {
+    const itemId = Math.max(0, Math.min(2_147_483_647, Math.round(Number(rule?.itemId) || 0)));
+    const quantity = Math.max(1, Math.min(2_147_483_647, Math.round(Number(rule?.quantity) || 1)));
+    const chancePercent = normalizeChance(Number(rule?.chancePercent ?? 100));
+    const mobTypeRaw = rule?.mobType;
+    const mapIdRaw = rule?.mapId;
+    const mobType = mobTypeRaw === null || mobTypeRaw === undefined || mobTypeRaw === ('' as any)
+      ? null
+      : Math.max(-2_147_483_648, Math.min(2_147_483_647, Math.round(Number(mobTypeRaw) || 0)));
+    const mapId = mapIdRaw === null || mapIdRaw === undefined || mapIdRaw === ('' as any)
+      ? null
+      : Math.max(-2_147_483_648, Math.min(2_147_483_647, Math.round(Number(mapIdRaw) || 0)));
+    return {
+      id: String(rule?.id || `custom-drop-${index}`),
+      enabled: rule?.enabled !== false,
+      itemId,
+      quantity,
+      chancePercent,
+      mobType,
+      mapId,
+    };
+  });
   draftStore.set(session, normalized);
 }
 
@@ -1053,51 +823,51 @@ export function resetGameMechanicsDraft(session: LoadedJarSession): void {
   draftStore.set(session, cloneDraft(DEFAULT_DRAFT));
 }
 
-export function exportGameMechanicsDraft(
-  session: LoadedJarSession
-): GameMechanicsDraft {
+export function exportGameMechanicsDraft(session: LoadedJarSession): GameMechanicsDraft {
   return getGameMechanicsDraft(session);
 }
 
-export function importGameMechanicsDraft(
-  session: LoadedJarSession,
-  draft: GameMechanicsDraft | null | undefined
-): void {
-  if (!draft) {
-    resetGameMechanicsDraft(session);
-    return;
-  }
+export function importGameMechanicsDraft(session: LoadedJarSession, draft: GameMechanicsDraft | null | undefined): void {
+  if (!draft) { resetGameMechanicsDraft(session); return; }
   setGameMechanicsDraft(session, draft);
 }
 
 export function getGameMechanicsDirtyCount(draft: GameMechanicsDraft): number {
   let count = 0;
   if (!sameNumber(draft.tnsmMultiplier, DEFAULT_DRAFT.tnsmMultiplier)) count++;
+  if (draft.tnsmLevelLimitEnabled !== DEFAULT_DRAFT.tnsmLevelLimitEnabled) count++;
   if (!sameNumber(draft.powerCapMultiplier, DEFAULT_DRAFT.powerCapMultiplier)) count++;
   if (!sameNumber(draft.treasureRewardMultiplier, DEFAULT_DRAFT.treasureRewardMultiplier)) count++;
   if (!sameNumber(draft.desiredGlobalGoldMultiplier, DEFAULT_DRAFT.desiredGlobalGoldMultiplier)) count++;
-
   for (const [key, defaultValue] of Object.entries(DEFAULT_DROP_CHANCES)) {
     if (!sameNumber(draft.dropChancePercent[key] ?? defaultValue, defaultValue)) count++;
   }
   for (const [key, defaultValue] of Object.entries(DEFAULT_DROP_QUANTITY)) {
     if (!sameNumber(draft.dropQuantity[key] ?? defaultValue, defaultValue)) count++;
   }
-
+  count += (draft.customMobDrops ?? []).length;
   return count;
 }
 
+/**
+ * Multipliers are intentionally NOT hard-capped by the panel anymore.
+ * The writer is responsible for rejecting values that cannot be represented by the
+ * real JVM primitive used by that mechanic (int/long/double). This avoids silently
+ * cutting e.g. x5000 TNSM back to x100.
+ */
 export function normalizeMultiplier(value: number): number {
-  if (!Number.isFinite(value)) return 1;
-  return Math.min(100, Math.max(0.1, Math.round(value * 10) / 10));
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return value;
 }
 
+/** Probability has a real mathematical range of 0..100%. This is not an artificial UI cap. */
 export function normalizeChance(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, Math.round(value * 1000) / 1000));
 }
 
+/** Quantity no longer has the old artificial 999,999 cap. */
 export function normalizeQuantity(value: number): number {
   if (!Number.isFinite(value)) return 1;
-  return Math.min(999999, Math.max(1, Math.round(value)));
+  return Math.max(1, Math.round(value));
 }
