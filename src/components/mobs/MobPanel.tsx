@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { LoadedJarSession } from '../../types/jar';
 import { JarImagePreview } from '../map/JarImagePreview';
+import { SmallImagePreview } from '../game-data/SmallImagePreview';
 import { analyzeItemTables } from '../../services/itemDataService';
 import {
   analyzeMobs,
@@ -46,9 +47,13 @@ type SpawnFilter = 'all' | 'used' | 'unused';
 type NumericMobDraftKey = Exclude<keyof MobDraft, 'name'>;
 
 interface ItemLookupEntry {
+  id: number;
   name: string;
   iconId: string;
+  type: string;
 }
+
+const JAVA_INT_MAX = 2_147_483_647;
 
 function formatNumber(value: number): string {
   return Number.isFinite(value) ? value.toLocaleString('vi-VN') : '0';
@@ -57,6 +62,14 @@ function formatNumber(value: number): string {
 function clampNumber(value: number, min: number, max: number, fallback = min): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeSearch(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('vi-VN')
+    .trim();
 }
 
 function createBlankDropRule(mobId: number): MobDropRule {
@@ -83,10 +96,8 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   const [spawnFilter, setSpawnFilter] = useState<SpawnFilter>('all');
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
-
   const [dropRules, setDropRules] = useState<MobDropRule[]>([]);
   const [savedRuleId, setSavedRuleId] = useState<string | null>(null);
-
   const [itemLookup, setItemLookup] = useState<Map<string, ItemLookupEntry>>(new Map());
 
   const load = async () => {
@@ -115,13 +126,17 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
         const analysis = session.itemAnalysis ?? (await analyzeItemTables(session));
         session.itemAnalysis = analysis;
         if (cancelled) return;
+
         const lookup = new Map<string, ItemLookupEntry>();
         for (const item of analysis.items) {
-          const id = String(item.id ?? '').trim();
-          if (!id || lookup.has(id)) continue;
-          lookup.set(id, {
-            name: String(item.name || `Item #${id}`),
+          const rawId = String(item.id ?? '').trim();
+          const parsedId = Number(rawId);
+          if (!rawId || !Number.isInteger(parsedId) || parsedId < 0 || lookup.has(rawId)) continue;
+          lookup.set(rawId, {
+            id: parsedId,
+            name: String(item.name || `Item #${rawId}`),
             iconId: String(item.iconId || ''),
+            type: String(item.type || ''),
           });
         }
         setItemLookup(lookup);
@@ -141,10 +156,9 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
     onDraftsUpdated?.(getDirtyMobCount(session, snapshot.mobs));
   }, [session, snapshot, revision, onDraftsUpdated]);
 
-
   const visibleMobs = useMemo(() => {
     if (!snapshot) return [];
-    const q = query.trim().toLowerCase();
+    const q = normalizeSearch(query);
     return snapshot.mobs.filter((mob) => {
       const hasSpawn = mob.totalSpawnCount > 0;
       if (spawnFilter === 'used' && !hasSpawn) return false;
@@ -152,12 +166,12 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
       if (dirtyOnly && !isMobDraftDirty(mob, getMobDraft(session, mob))) return false;
       if (!q) return true;
       return (
-        mob.name.toLowerCase().includes(q) ||
+        normalizeSearch(mob.name).includes(q) ||
         String(mob.id).includes(q) ||
         String(mob.type).includes(q) ||
         mob.maps.some(
           (usage) =>
-            usage.mapName.toLowerCase().includes(q) || String(usage.mapId).includes(q)
+            normalizeSearch(usage.mapName).includes(q) || String(usage.mapId).includes(q)
         )
       );
     });
@@ -233,9 +247,7 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   const updateDropRule = (ruleId: string, patch: Partial<MobDropRule>) => {
     setSavedRuleId(null);
     setDropRules((current) =>
-      current.map((rule) =>
-        rule.ruleId === ruleId ? { ...rule, ...patch } : rule
-      )
+      current.map((rule) => (rule.ruleId === ruleId ? { ...rule, ...patch } : rule))
     );
   };
 
@@ -247,10 +259,22 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
 
   const saveDropRule = (rule: MobDropRule) => {
     if (!selectedMob) return;
-    const saved = upsertMobDropRule(session, selectedMob.id, rule);
+    const normalized: MobDropRule = {
+      ...rule,
+      itemId: Math.max(0, Math.round(rule.itemId)),
+      chancePercent: clampNumber(rule.chancePercent, 0, 100, 0),
+      quantityMin: clampNumber(Math.round(rule.quantityMin || 1), 1, JAVA_INT_MAX, 1),
+      quantityMax: clampNumber(Math.round(rule.quantityMax || rule.quantityMin || 1), 1, JAVA_INT_MAX, 1),
+    };
+    normalized.quantityMax = Math.max(normalized.quantityMin, normalized.quantityMax);
+
+    const saved = upsertMobDropRule(session, selectedMob.id, normalized);
     setDropRules(getMobDropRules(session, selectedMob.id));
     setSavedRuleId(saved.ruleId);
-    window.setTimeout(() => setSavedRuleId((current) => current === saved.ruleId ? null : current), 1200);
+    window.setTimeout(
+      () => setSavedRuleId((current) => (current === saved.ruleId ? null : current)),
+      1200
+    );
   };
 
   const removeDropRule = (rule: MobDropRule) => {
@@ -274,16 +298,8 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
               <Chip>{usedMobCount} đang xuất hiện trên map</Chip>
               <Chip>{snapshot.totalSpawnCount} spawn</Chip>
               <Chip>a/a/a/A.u</Chip>
-              {dirtyCount > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-mono">
-                  {dirtyCount} nháp template
-                </span>
-              )}
-              {selectedMob && (
-                <span className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 text-[10px] font-mono">
-                  {dropRules.length} rule drop
-                </span>
-              )}
+              {dirtyCount > 0 && <Chip>{dirtyCount} nháp template</Chip>}
+              {selectedMob && <Chip>{dropRules.length} rule drop</Chip>}
             </div>
             <div className="text-[10px] text-zinc-500 mt-0.5">
               Chỉnh template quái + map xuất hiện + cấu hình vật phẩm rơi riêng từng mob.
@@ -297,7 +313,7 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
       </div>
 
       <div className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
-        Chọn một quái rồi vào <strong>Vật phẩm rơi</strong> để thêm Item ID, tỷ lệ và số lượng. Không cần tài khoản admin hay backend; rule được lưu riêng theo JAR trong trình duyệt.
+        Chọn quái → <strong>Vật phẩm rơi</strong> → gõ tên vật phẩm hoặc ID để chọn. Quantity được lưu đúng theo từng rule.
       </div>
 
       <div className="min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-2">
@@ -312,7 +328,6 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                 className="w-full pl-8 pr-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
               />
             </div>
-
             <div className="flex items-center gap-1 overflow-x-auto">
               <FilterButton active={spawnFilter === 'all'} onClick={() => setSpawnFilter('all')}>Tất cả</FilterButton>
               <FilterButton active={spawnFilter === 'used'} onClick={() => setSpawnFilter('used')}>Có spawn</FilterButton>
@@ -331,7 +346,6 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
               const rowDraft = getMobDraft(session, mob);
               const rowDirty = isMobDraftDirty(mob, rowDraft);
               const selected = selectedMob?.rowIndex === mob.rowIndex;
-
               return (
                 <button
                   key={mob.rowIndex}
@@ -341,8 +355,8 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                     selected
                       ? 'border-emerald-300 bg-emerald-50'
                       : rowDirty
-                      ? 'border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50'
-                      : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                        ? 'border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50'
+                        : 'border-zinc-200 bg-white hover:bg-zinc-50'
                   }`}
                 >
                   <div className="flex items-start gap-2">
@@ -353,17 +367,8 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                       variant="icon"
                     />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <div className="font-semibold text-[12px] text-zinc-900 truncate">{rowDraft.name}</div>
-                        {rowDirty && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 font-mono">
-                            nháp
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">
-                        mob #{mob.id} · {getMobTypeLabel(mob.type)}
-                      </div>
+                      <div className="font-semibold text-[12px] text-zinc-900 truncate">{rowDraft.name}</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">mob #{mob.id} · {getMobTypeLabel(mob.type)}</div>
                       <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-zinc-600 font-mono">
                         <span>HP {formatNumber(rowDraft.hp)}</span>
                         <span>SPD {formatNumber(rowDraft.speed)}</span>
@@ -375,53 +380,38 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                 </button>
               );
             })}
-
-            {visibleMobs.length === 0 && (
-              <div className="px-3 py-8 text-center text-[11px] text-zinc-500">
-                Không có quái phù hợp bộ lọc hiện tại.
-              </div>
-            )}
           </div>
         </aside>
 
         <section className="min-h-0 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col">
           {!selectedMob || !draft ? (
-            <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
-              Chọn một quái ở cột trái để xem chi tiết.
-            </div>
+            <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">Chọn một quái để xem chi tiết.</div>
           ) : (
             <>
-              <div className="shrink-0 p-3 border-b border-zinc-200">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h2 className="text-lg font-bold text-zinc-900 truncate">{draft.name}</h2>
-                      <Chip>mob #{selectedMob.id}</Chip>
-                      <Chip>{getMobTypeLabel(selectedMob.type)}</Chip>
-                      <Chip>{selectedMob.maps.length} map</Chip>
-                      <Chip>{dropRules.length} rule drop</Chip>
-                      {dirty && (
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-mono">
-                          Đang có nháp template
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-zinc-500 mt-1">
-                      Template: <strong>a/a/a/A.u</strong> · Sprite: <strong>x1/mob/{selectedMob.id}/img.png</strong>
-                    </div>
+              <div className="shrink-0 p-3 border-b border-zinc-200 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-lg font-bold text-zinc-900 truncate">{draft.name}</h2>
+                    <Chip>mob #{selectedMob.id}</Chip>
+                    <Chip>{getMobTypeLabel(selectedMob.type)}</Chip>
+                    <Chip>{selectedMob.maps.length} map</Chip>
+                    <Chip>{dropRules.length} rule drop</Chip>
+                    {dirty && <Chip>Đang có nháp template</Chip>}
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      resetMobDraft(session, selectedMob);
-                      setRevision((value) => value + 1);
-                    }}
-                    className="px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-medium cursor-pointer"
-                  >
-                    Trả template về gốc
-                  </button>
+                  <div className="text-[11px] text-zinc-500 mt-1">
+                    Template: <strong>a/a/a/A.u</strong> · Sprite: <strong>x1/mob/{selectedMob.id}/img.png</strong>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetMobDraft(session, selectedMob);
+                    setRevision((value) => value + 1);
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-medium cursor-pointer"
+                >
+                  Trả template về gốc
+                </button>
               </div>
 
               <div className="min-h-0 flex-1 overflow-auto p-3 space-y-3">
@@ -437,14 +427,12 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                         showPath
                       />
                     </div>
-
                     <div className="grid grid-cols-2 gap-2">
                       <StatCard icon={<Heart className="w-3.5 h-3.5 text-rose-500" />} label="HP gốc" value={formatNumber(selectedMob.hp)} />
                       <StatCard icon={<Swords className="w-3.5 h-3.5 text-amber-500" />} label="% Damage" value={formatNumber(draft.percentDamage)} />
                       <StatCard icon={<Gauge className="w-3.5 h-3.5 text-blue-500" />} label="Range move" value={formatNumber(draft.rangeMove)} />
                       <StatCard icon={<Zap className="w-3.5 h-3.5 text-violet-500" />} label="% Tiềm năng" value={formatNumber(draft.percentTiemNang)} />
                     </div>
-
                     <div className="rounded-xl border border-zinc-200 p-3">
                       <div className="text-[11px] font-semibold text-zinc-700 mb-2">Sửa nhanh</div>
                       <div className="grid grid-cols-2 gap-2">
@@ -459,16 +447,9 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                   </div>
 
                   <div className="space-y-3">
-                    <SectionCard
-                      title="Thông tin template quái"
-                      subtitle="Các chỉ số này áp dụng theo template. Spawn riêng từng map chỉnh trong panel Map."
-                    >
+                    <SectionCard title="Thông tin template quái" subtitle="Các chỉ số này áp dụng theo template. Spawn riêng từng map chỉnh trong panel Map.">
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                        <LabeledInput
-                          label="Tên quái"
-                          value={draft.name}
-                          onChange={(value) => saveDraft({ ...draft, name: value })}
-                        />
+                        <LabeledInput label="Tên quái" value={draft.name} onChange={(value) => saveDraft({ ...draft, name: value })} />
                         <LabeledNumberInput label="HP" value={draft.hp} onChange={(value) => applyNumber('hp', value)} />
                         <LabeledNumberInput label="Range move" value={draft.rangeMove} onChange={(value) => applyNumber('rangeMove', value)} />
                         <LabeledNumberInput label="Speed" value={draft.speed} onChange={(value) => applyNumber('speed', value)} />
@@ -484,8 +465,8 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                       title="Vật phẩm rơi"
                       subtitle={`Drop riêng cho mob #${selectedMob.id}. Mỗi item là một rule độc lập; một lần giết có thể trúng nhiều rule.`}
                     >
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-800">
-                        <strong>Mob Drop Editor:</strong> cấu hình bên dưới được lưu theo đúng JAR đang mở. Đây là dữ liệu drop riêng từng mob; writer runtime vào bytecode a/a/aa sẽ được nối ở bước tiếp theo, nên panel không đánh dấu giả là đã patch JAR.
+                      <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] text-blue-800">
+                        Gõ <strong>tên vật phẩm</strong> hoặc <strong>ID</strong>. Panel lấy tên + icon trực tiếp từ Item database của JAR.
                       </div>
 
                       <div className="mt-3 flex items-center justify-between gap-2">
@@ -493,7 +474,7 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                           <Boxes className="w-4 h-4 text-blue-600" />
                           <div>
                             <div className="text-[11px] font-semibold text-zinc-800">Danh sách item rơi</div>
-                            <div className="text-[9px] text-zinc-500">{dropRules.length} rule · nhập Item ID, panel tự hiện tên từ Item database của JAR</div>
+                            <div className="text-[9px] text-zinc-500">{dropRules.length} rule · search tên/ID · có ảnh preview</div>
                           </div>
                         </div>
                         <button
@@ -508,15 +489,16 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
 
                       {dropRules.length === 0 ? (
                         <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/40 px-4 py-6 text-center text-[11px] text-blue-700">
-                          Mob #{selectedMob.id} chưa có custom drop. Bấm <strong>Thêm vật phẩm rơi</strong> để tạo rule đầu tiên.
+                          Mob #{selectedMob.id} chưa có custom drop.
                         </div>
                       ) : (
                         <div className="mt-3 space-y-2">
                           {dropRules.map((rule) => (
                             <DropRuleEditor
                               key={rule.ruleId}
+                              session={session}
                               rule={rule}
-                              item={itemLookup.get(String(rule.itemId))}
+                              itemLookup={itemLookup}
                               saved={savedRuleId === rule.ruleId}
                               onChange={(patch) => updateDropRule(rule.ruleId, patch)}
                               onSave={() => saveDropRule(rule)}
@@ -527,14 +509,9 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                       )}
                     </SectionCard>
 
-                    <SectionCard
-                      title="Map xuất hiện"
-                      subtitle="Danh sách map đang có mob này spawn. Spawn level/HP/vị trí vẫn chỉnh ở panel Map."
-                    >
+                    <SectionCard title="Map xuất hiện" subtitle="Danh sách map đang có mob này spawn.">
                       {selectedMob.maps.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[11px] text-zinc-500">
-                          Chưa thấy mob này trong dữ liệu spawn của các map đã parse.
-                        </div>
+                        <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[11px] text-zinc-500">Chưa thấy mob này trong dữ liệu spawn.</div>
                       ) : (
                         <div className="space-y-2">
                           {selectedMob.maps.map((usage) => (
@@ -555,103 +532,198 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
 }
 
 function DropRuleEditor({
+  session,
   rule,
-  item,
+  itemLookup,
   saved,
   onChange,
   onSave,
   onDelete,
 }: {
+  session: LoadedJarSession;
   rule: MobDropRule;
-  item?: ItemLookupEntry;
+  itemLookup: Map<string, ItemLookupEntry>;
   saved: boolean;
   onChange: (patch: Partial<MobDropRule>) => void;
   onSave: () => void;
   onDelete: () => void;
 }) {
+  const item = itemLookup.get(String(rule.itemId));
+  const quantityText =
+    rule.quantityMin === rule.quantityMax
+      ? `Mỗi lần trúng rule: ${formatNumber(rule.quantityMin)} vật phẩm`
+      : `Mỗi lần trúng rule: ngẫu nhiên ${formatNumber(rule.quantityMin)}–${formatNumber(rule.quantityMax)} vật phẩm`;
+
   return (
     <div className={`rounded-xl border p-3 ${rule.enabled ? 'border-blue-200 bg-blue-50/30' : 'border-zinc-200 bg-zinc-50 opacity-80'}`}>
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] font-semibold text-zinc-900">
-              {item?.name || `Item #${rule.itemId}`}
-            </span>
-            <span className="px-1.5 py-0.5 rounded-full border border-zinc-200 bg-white text-[9px] font-mono text-zinc-500">
-              ID {rule.itemId}
-            </span>
-            <span className="px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-[9px] font-mono text-blue-700">
-              {rule.chancePercent}% · {rule.quantityMin === rule.quantityMax ? `x${rule.quantityMin}` : `x${rule.quantityMin}-${rule.quantityMax}`}
-            </span>
+        <div className="flex items-center gap-2 min-w-0">
+          {item ? (
+            <SmallImagePreview session={session} imageId={item.iconId} alt={item.name} variant="icon" />
+          ) : (
+            <div className="w-12 h-12 shrink-0 rounded-lg border border-zinc-200 bg-white flex items-center justify-center text-zinc-400 text-xs">?</div>
+          )}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-semibold text-zinc-900 truncate">{item?.name || `Item #${rule.itemId}`}</span>
+              <span className="px-1.5 py-0.5 rounded-full border border-zinc-200 bg-white text-[9px] font-mono text-zinc-500">ID {rule.itemId}</span>
+              <span className="px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-[9px] font-mono text-blue-700">
+                {rule.chancePercent}% · {rule.quantityMin === rule.quantityMax ? `x${rule.quantityMin}` : `x${rule.quantityMin}-${rule.quantityMax}`}
+              </span>
+            </div>
+            <div className="text-[9px] text-zinc-500 mt-1 font-mono">{quantityText}</div>
           </div>
-          <div className="text-[9px] text-zinc-500 mt-1 font-mono">ruleId: {rule.ruleId}</div>
         </div>
 
-        <label className="flex items-center gap-1.5 text-[10px] text-zinc-600 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={rule.enabled}
-            onChange={(event) => onChange({ enabled: event.target.checked })}
-          />
+        <label className="flex items-center gap-1.5 text-[10px] text-zinc-600 cursor-pointer shrink-0">
+          <input type="checkbox" checked={rule.enabled} onChange={(event) => onChange({ enabled: event.target.checked })} />
           Bật rule
         </label>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
-        <LabeledNumberInput
-          label="Item ID"
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(260px,1.5fr)_minmax(120px,.65fr)_minmax(120px,.65fr)_minmax(120px,.65fr)] gap-2">
+        <ItemPicker
+          session={session}
           value={rule.itemId}
-          onChange={(value) => onChange({ itemId: Math.max(0, Math.round(value)) })}
+          itemLookup={itemLookup}
+          onChange={(itemId) => onChange({ itemId })}
         />
-        <LabeledNumberInput
-          label="Tỷ lệ %"
-          value={rule.chancePercent}
-          step="0.01"
-          onChange={(value) => onChange({ chancePercent: clampNumber(value, 0, 100, 0) })}
-        />
+        <LabeledNumberInput label="Tỷ lệ %" value={rule.chancePercent} step="0.01" onChange={(value) => onChange({ chancePercent: clampNumber(value, 0, 100, 0) })} />
         <LabeledNumberInput
           label="SL min"
           value={rule.quantityMin}
-          onChange={(value) =>
-            onChange({
-              quantityMin: Math.max(1, Math.round(value || 1)),
-              quantityMax: Math.max(Math.max(1, Math.round(value || 1)), rule.quantityMax),
-            })
-          }
+          onChange={(value) => {
+            const nextMin = clampNumber(Math.round(value || 1), 1, JAVA_INT_MAX, 1);
+            onChange({ quantityMin: nextMin, quantityMax: Math.max(nextMin, rule.quantityMax) });
+          }}
         />
         <LabeledNumberInput
           label="SL max"
           value={rule.quantityMax}
-          onChange={(value) => onChange({ quantityMax: Math.max(rule.quantityMin, Math.round(value || rule.quantityMin)) })}
+          onChange={(value) => {
+            const nextMax = clampNumber(Math.round(value || rule.quantityMin), rule.quantityMin, JAVA_INT_MAX, rule.quantityMin);
+            onChange({ quantityMax: nextMax });
+          }}
         />
       </div>
 
+      <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] text-emerald-800">
+        {rule.quantityMin === 1 && rule.quantityMax === 1
+          ? 'SL min = 1 và SL max = 1 → mỗi lần rule trúng chỉ tạo đúng 1 item. Không lấy multiplier vàng làm quantity.'
+          : quantityText}
+      </div>
+
       <div className="mt-2 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] gap-2">
-        <LabeledInput
-          label="Ghi chú"
-          value={rule.note || ''}
-          onChange={(value) => onChange({ note: value })}
-          placeholder="Ghi chú cho rule này"
-        />
+        <LabeledInput label="Ghi chú" value={rule.note || ''} onChange={(value) => onChange({ note: value })} placeholder="Ghi chú cho rule này" />
         <div className="flex items-end gap-1.5">
-          <button
-            type="button"
-            onClick={onSave}
-            className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1"
-          >
+          <button type="button" onClick={onSave} className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1">
             {saved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
             {saved ? 'Đã lưu' : 'Lưu'}
           </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-700 text-[10px] font-semibold cursor-pointer flex items-center gap-1"
-          >
+          <button type="button" onClick={onDelete} className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
             <Trash2 className="w-3.5 h-3.5" />
             Xóa
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ItemPicker({
+  session,
+  value,
+  itemLookup,
+  onChange,
+}: {
+  session: LoadedJarSession;
+  value: number;
+  itemLookup: Map<string, ItemLookupEntry>;
+  onChange: (itemId: number) => void;
+}) {
+  const selected = itemLookup.get(String(value));
+  const [searchText, setSearchText] = useState(selected?.name || String(value));
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) setSearchText(selected?.name || String(value));
+  }, [selected?.name, value, open]);
+
+  const results = useMemo(() => {
+    const q = normalizeSearch(searchText);
+    const all = Array.from(itemLookup.values());
+    if (!q) return all.slice(0, 30);
+    return all
+      .filter((entry) => normalizeSearch(entry.name).includes(q) || String(entry.id).includes(q))
+      .slice(0, 30);
+  }, [itemLookup, searchText]);
+
+  const choose = (entry: ItemLookupEntry) => {
+    onChange(entry.id);
+    setSearchText(entry.name);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative">
+      <div className="text-[10px] text-zinc-500 mb-1 font-mono">Vật phẩm</div>
+      <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100">
+        {selected ? (
+          <SmallImagePreview session={session} imageId={selected.iconId} alt={selected.name} variant="icon" />
+        ) : (
+          <div className="w-12 h-12 shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 flex items-center justify-center text-zinc-400">?</div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="relative">
+            <Search className="absolute left-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
+            <input
+              type="text"
+              value={searchText}
+              onFocus={() => setOpen(true)}
+              onChange={(event) => {
+                setSearchText(event.target.value);
+                setOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && results[0]) {
+                  event.preventDefault();
+                  choose(results[0]);
+                }
+                if (event.key === 'Escape') setOpen(false);
+              }}
+              placeholder="Gõ tên vật phẩm hoặc ID..."
+              className="w-full bg-transparent pl-5 text-[11px] text-zinc-900 placeholder-zinc-400 focus:outline-none"
+            />
+          </div>
+          <div className="mt-0.5 text-[9px] text-zinc-500 font-mono truncate">
+            {selected ? `ID ${selected.id} · icon ${selected.iconId || '?'}${selected.type ? ` · type ${selected.type}` : ''}` : `ID hiện tại ${value}`}
+          </div>
+        </div>
+      </div>
+
+      {open && (
+        <div className="absolute z-50 left-0 right-0 mt-1 max-h-80 overflow-y-auto rounded-xl border border-zinc-200 bg-white shadow-2xl">
+          {results.length === 0 ? (
+            <div className="px-3 py-4 text-[10px] text-zinc-500">Không tìm thấy vật phẩm trong database JAR.</div>
+          ) : (
+            results.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => choose(entry)}
+                className={`w-full px-2.5 py-2 border-b last:border-b-0 border-zinc-100 hover:bg-blue-50 text-left flex items-center gap-2 cursor-pointer ${entry.id === value ? 'bg-blue-50' : 'bg-white'}`}
+              >
+                <SmallImagePreview session={session} imageId={entry.iconId} alt={entry.name} variant="icon" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] text-zinc-900 font-semibold truncate">{entry.name}</div>
+                  <div className="text-[9px] text-zinc-500 font-mono">ID {entry.id} · icon {entry.iconId || '?'}{entry.type ? ` · type ${entry.type}` : ''}</div>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -669,40 +741,20 @@ function MapUsageCard({ usage }: { usage: MobMapUsage }) {
             map #{usage.mapId} · {usage.spawnCount} spawn · cấp TB {usage.avgLevel} · HP spawn TB {usage.avgSpawnHp.toLocaleString('vi-VN')}
           </div>
         </div>
-        <span className="px-2 py-0.5 rounded-full bg-white border border-zinc-200 text-[10px] font-mono text-zinc-600">
-          {usage.spawnCount} spawn
-        </span>
+        <span className="px-2 py-0.5 rounded-full bg-white border border-zinc-200 text-[10px] font-mono text-zinc-600">{usage.spawnCount} spawn</span>
       </div>
-
       <div className="mt-2 flex flex-wrap gap-1.5">
         {usage.spawns.slice(0, 8).map((spawn) => (
-          <span
-            key={`${usage.mapId}-${spawn.index}`}
-            className="px-2 py-1 rounded-lg bg-white border border-zinc-200 text-[10px] font-mono text-zinc-600"
-            title={`spawn #${spawn.index} · level ${spawn.level} · hp ${spawn.hp} · x ${spawn.x} · y ${spawn.y}`}
-          >
+          <span key={`${usage.mapId}-${spawn.index}`} className="px-2 py-1 rounded-lg bg-white border border-zinc-200 text-[10px] font-mono text-zinc-600">
             #{spawn.index} · lv {spawn.level} · ({spawn.x}, {spawn.y})
           </span>
         ))}
-        {usage.spawns.length > 8 && (
-          <span className="px-2 py-1 rounded-lg bg-white border border-zinc-200 text-[10px] font-mono text-zinc-500">
-            +{usage.spawns.length - 8} spawn khác
-          </span>
-        )}
       </div>
     </div>
   );
 }
 
-function SectionCard({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
+function SectionCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-zinc-200 p-3">
       <div className="mb-3">
@@ -714,51 +766,20 @@ function SectionCard({
   );
 }
 
-function LabeledInput({
-  label,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
+function LabeledInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <label className="block">
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <input
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-      />
+      <input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100" />
     </label>
   );
 }
 
-function LabeledNumberInput({
-  label,
-  value,
-  onChange,
-  step,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-  step?: string;
-}) {
+function LabeledNumberInput({ label, value, onChange, step }: { label: string; value: number; onChange: (value: number) => void; step?: string }) {
   return (
     <label className="block">
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <input
-        type="number"
-        step={step}
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-      />
+      <input type="number" step={step} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100" />
     </label>
   );
 }
@@ -767,78 +788,35 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <div className="px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-100 text-[11px] text-zinc-700">
-        {value}
-      </div>
+      <div className="px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-100 text-[11px] text-zinc-700">{value}</div>
     </div>
   );
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
+function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-3">
-      <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
-        {icon}
-        {label}
-      </div>
+      <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">{icon}{label}</div>
       <div className="mt-1 text-sm font-bold text-zinc-900">{value}</div>
     </div>
   );
 }
 
 function Chip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="px-2 py-0.5 rounded-full bg-zinc-50 border border-zinc-200 text-zinc-600 text-[10px] font-mono">
-      {children}
-    </span>
-  );
+  return <span className="px-2 py-0.5 rounded-full bg-zinc-50 border border-zinc-200 text-zinc-600 text-[10px] font-mono">{children}</span>;
 }
 
-function FilterButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`px-2.5 py-1 rounded-full border text-[10px] font-medium whitespace-nowrap cursor-pointer ${
-        active
-          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-          : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-      }`}
-    >
+    <button type="button" onClick={onClick} className={`px-2.5 py-1 rounded-full border text-[10px] font-medium whitespace-nowrap cursor-pointer ${active ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
       {children}
     </button>
   );
 }
 
-function QuickButton({
-  onClick,
-  children,
-}: {
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function QuickButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="px-3 py-2 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-[11px] font-medium text-zinc-700 cursor-pointer"
-    >
+    <button type="button" onClick={onClick} className="px-3 py-2 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-[11px] font-medium text-zinc-700 cursor-pointer">
       {children}
     </button>
   );

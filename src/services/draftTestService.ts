@@ -57,6 +57,10 @@ import {
 } from './gameMechanicsService';
 import { buildMechanicsPatches } from './mechanicsPatchService';
 import {
+  exportMobDropDrafts,
+  getMobDropDraftFingerprint,
+} from './mobDropDraftService';
+import {
   analyzeSkills,
   getDirtySkillDraftEntries,
   getSkillDraftFingerprint,
@@ -866,6 +870,7 @@ export function getDraftStateFingerprint(session: LoadedJarSession): string {
     npc: stableNpcDraftFingerprint(session),
     map: getMapDraftFingerprint(session),
     mobs: getMobDraftFingerprint(session),
+    mobDrops: getMobDropDraftFingerprint(session),
     skills: getSkillDraftFingerprint(session),
     boss: getBossDraftFingerprint(session),
     character: getCharacterDraftFingerprint(session),
@@ -1193,7 +1198,46 @@ export async function buildDraftTestCandidate(
     progress('PLANNING', 'Đang dựng writer Cơ chế và kiểm tra nháp...', 2, 5);
 
     const mechanicDraft = getGameMechanicsDraft(session);
-    summary.mechanicDrafts = getGameMechanicsDirtyCount(mechanicDraft);
+
+    // MobPanel stores per-mob drop rules in mobDropDraftService, while the runtime
+    // helper historically read only mechanicDraft.customMobDrops. That disconnect
+    // made the UI show a saved 100% rule but the exported JAR contained no such
+    // drop at all. Merge both sources here, at the actual build boundary.
+    const panelMobDropRules: GenericMobDropInputRule[] = exportMobDropDrafts(session)
+      .flatMap(([mobId, rules]) =>
+        rules.map((rule) => ({
+          id: `mob-panel:${mobId}:${rule.ruleId}`,
+          enabled: rule.enabled !== false,
+          itemId: rule.itemId,
+          quantity: rule.quantityMin,
+          quantityMin: rule.quantityMin,
+          quantityMax: rule.quantityMax,
+          chancePercent: rule.chancePercent,
+          // a/m.cG is the mob template id used by MobPanel (x1/mob/{id}/...).
+          mobType: mobId,
+          mapId: null,
+        }))
+      );
+
+    const runtimeCustomMobDrops: GenericMobDropInputRule[] = [
+      ...(mechanicDraft.customMobDrops ?? []).map((rule) => ({
+        ...rule,
+        quantityMin: rule.quantity,
+        quantityMax: rule.quantity,
+      })),
+      ...panelMobDropRules,
+    ];
+
+    if (runtimeCustomMobDrops.length > 100) {
+      blockers.push({
+        area: 'Cơ chế',
+        count: runtimeCustomMobDrops.length,
+        message: `Generic Mob Drop có ${runtimeCustomMobDrops.length} rule, vượt giới hạn an toàn 100 rule/JAR.`,
+      });
+    }
+
+    summary.mechanicDrafts =
+      getGameMechanicsDirtyCount(mechanicDraft) + panelMobDropRules.length;
 
     // IMPORTANT: mechanicsPatchService's legacy "global gold" writer multiplies
     // the generic a/a/h drop wrapper, so it also scales non-gold items (eggs,
@@ -1289,7 +1333,8 @@ export async function buildDraftTestCandidate(
     // full Java int32 values and therefore do not inherit the old iconst 1..5 limit.
     if (
       mechanicsResult.status !== 'FAILED' &&
-      (mechanicDraft.customMobDrops ?? []).length > 0
+      runtimeCustomMobDrops.length > 0 &&
+      runtimeCustomMobDrops.length <= 100
     ) {
       try {
         const wantedPath = normalizeClassEntryPath('a/a/aa');
@@ -1310,7 +1355,7 @@ export async function buildDraftTestCandidate(
 
         const patched = patchGenericMobDropHook(
           currentBytes,
-          mechanicDraft.customMobDrops ?? []
+          runtimeCustomMobDrops
         );
         mechanicsResult.rewrittenClasses.set(currentKey, patched.classBytes);
         mechanicsResult.rewrittenClasses.set(
@@ -1319,7 +1364,7 @@ export async function buildDraftTestCandidate(
         );
         mechanicsResult.appliedDraftCount += patched.ruleCount;
         mechanicsResult.appliedPatchCount += 2;
-        const enabled = (mechanicDraft.customMobDrops ?? []).filter(
+        const enabled = runtimeCustomMobDrops.filter(
           (rule) => rule.enabled !== false
         ).length;
         mechanicsResult.diagnostics.push(
@@ -1329,7 +1374,7 @@ export async function buildDraftTestCandidate(
       } catch (error: unknown) {
         blockers.push({
           area: 'Cơ chế',
-          count: Math.max(1, mechanicDraft.customMobDrops?.length ?? 0),
+          count: Math.max(1, runtimeCustomMobDrops.length),
           message: `Generic Mob Drop writer: ${
             error instanceof Error ? error.message : String(error)
           }`,
@@ -2819,14 +2864,28 @@ function patchFlexibleGemQuantity(
 }
 
 
-function normalizeGenericMobDropRules(rules: GenericMobDropRule[]): GenericMobDropRule[] {
+type GenericMobDropInputRule = GenericMobDropRule & {
+  /** Optional runtime range used by MobPanel rules. Mechanics rules keep min=max=quantity. */
+  quantityMin?: number;
+  quantityMax?: number;
+};
+
+type NormalizedGenericMobDropRule = GenericMobDropRule & {
+  quantityMin: number;
+  quantityMax: number;
+};
+
+function normalizeGenericMobDropRules(
+  rules: GenericMobDropInputRule[]
+): NormalizedGenericMobDropRule[] {
   if (!Array.isArray(rules)) return [];
   if (rules.length > 100) {
     throw new Error('Generic Mob Drop hiện hỗ trợ tối đa 100 rule trong một JAR.');
   }
   return rules.map((rule, index) => {
     const itemId = Math.round(Number(rule.itemId));
-    const quantity = Math.round(Number(rule.quantity));
+    const quantityMin = Math.round(Number(rule.quantityMin ?? rule.quantity));
+    const quantityMax = Math.round(Number(rule.quantityMax ?? rule.quantity));
     const chancePercent = Number(rule.chancePercent);
     const mobType = rule.mobType === null || rule.mobType === undefined
       ? null
@@ -2838,8 +2897,17 @@ function normalizeGenericMobDropRules(rules: GenericMobDropRule[]): GenericMobDr
     if (!Number.isInteger(itemId) || itemId < 0 || itemId > JAVA_INT_MAX) {
       throw new Error(`Drop custom #${index + 1}: itemId ${rule.itemId} không hợp lệ.`);
     }
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > JAVA_INT_MAX) {
-      throw new Error(`Drop custom #${index + 1}: quantity ${rule.quantity} vượt Java int32.`);
+    if (!Number.isInteger(quantityMin) || quantityMin < 1 || quantityMin > JAVA_INT_MAX) {
+      throw new Error(`Drop custom #${index + 1}: SL min ${rule.quantityMin ?? rule.quantity} vượt Java int32.`);
+    }
+    if (
+      !Number.isInteger(quantityMax) ||
+      quantityMax < quantityMin ||
+      quantityMax > JAVA_INT_MAX
+    ) {
+      throw new Error(
+        `Drop custom #${index + 1}: SL max ${rule.quantityMax ?? rule.quantity} phải nằm trong ${quantityMin}..${JAVA_INT_MAX}.`
+      );
     }
     if (!Number.isFinite(chancePercent) || chancePercent < 0 || chancePercent > 100) {
       throw new Error(`Drop custom #${index + 1}: chance ${rule.chancePercent}% phải nằm trong 0..100.`);
@@ -2854,7 +2922,10 @@ function normalizeGenericMobDropRules(rules: GenericMobDropRule[]): GenericMobDr
       id: String(rule.id || `custom-drop-${index}`),
       enabled: rule.enabled !== false,
       itemId,
-      quantity,
+      // Preserve the legacy fixed-quantity field for compatibility/diagnostics.
+      quantity: quantityMin,
+      quantityMin,
+      quantityMax,
       chancePercent: Math.round(chancePercent * 1000) / 1000,
       mobType,
       mapId,
@@ -2873,7 +2944,7 @@ function normalizeGenericMobDropRules(rules: GenericMobDropRule[]): GenericMobDr
  */
 function buildGenericMobDropHelper(
   targetClass: ClassFileInfo,
-  inputRules: GenericMobDropRule[]
+  inputRules: GenericMobDropInputRule[]
 ): ArrayBuffer {
   const rules = normalizeGenericMobDropRules(inputRules);
   const cp = new HelperConstantPool();
@@ -2936,10 +3007,20 @@ function buildGenericMobDropHelper(
       skipBranches.push(pos);
     }
 
+    const quantityCode =
+      rule.quantityMin === rule.quantityMax
+        ? helperIntPush(cp, rule.quantityMin)
+        : [
+            ...helperIntPush(cp, rule.quantityMin),
+            ...helperIntPush(cp, rule.quantityMax - rule.quantityMin + 1),
+            0xb8, (rngRef >> 8) & 0xff, rngRef & 0xff,
+            0x60, // iadd -> min + w(max-min+1)
+          ];
+
     code.push(
       0x2a, // aload_0
       ...helperIntPush(cp, rule.itemId),
-      ...helperIntPush(cp, rule.quantity),
+      ...quantityCode,
       0xb8, (dropRef >> 8) & 0xff, dropRef & 0xff,
       0x57 // pop drop slot/result
     );
@@ -3025,7 +3106,7 @@ function appendGenericDropHelperMethodRef(target: MutableClass): number {
 
 function patchGenericMobDropHook(
   buffer: ArrayBuffer,
-  rules: GenericMobDropRule[]
+  rules: GenericMobDropInputRule[]
 ): { classBytes: ArrayBuffer; helperBytes: ArrayBuffer; ruleCount: number } {
   const normalizedRules = normalizeGenericMobDropRules(rules);
   const parsed = parseClassFile(buffer);
