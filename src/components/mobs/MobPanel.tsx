@@ -34,6 +34,7 @@ import {
 import {
   deleteMobDropRule,
   getMobDropRules,
+  getMobDropRuleCount,
   MobDropRule,
   upsertMobDropRule,
 } from '../../services/mobDropDraftService';
@@ -153,8 +154,13 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   useEffect(() => {
     if (!snapshot) return;
     void revision;
-    onDraftsUpdated?.(getDirtyMobCount(session, snapshot.mobs));
-  }, [session, snapshot, revision, onDraftsUpdated]);
+    // Saved mob-drop rules are real workspace changes too. Without counting
+    // them here, App.totalDirtyDrafts stays 0 and 'Test workspace' remains
+    // disabled even though V19's runtime writer can build these rules.
+    const templateDrafts = getDirtyMobCount(session, snapshot.mobs);
+    const dropRuleDrafts = getMobDropRuleCount(session);
+    onDraftsUpdated?.(templateDrafts + dropRuleDrafts);
+  }, [session, snapshot, revision, dropRules, onDraftsUpdated]);
 
   const visibleMobs = useMemo(() => {
     if (!snapshot) return [];
