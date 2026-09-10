@@ -1,4 +1,5 @@
 import { LoadedJarSession } from '../types/jar';
+import { ItemOptionOverride } from '../types/item';
 
 export interface WorkspaceMultiplayerConfig {
   enabled: boolean;
@@ -12,6 +13,15 @@ export interface WorkspaceNewItemOperation {
   id: string;
   sourceClass: string;
   values: string[];
+  customIcon?: {
+    fileName: string;
+    pngBase64: string;
+  };
+  /**
+   * ItemOption runtime dành riêng cho item mới. Các option này được đóng chung
+   * vào PanelItemOptionRuntime ngay trong Test workspace / Export JAR.
+   */
+  optionOverrides?: ItemOptionOverride[];
   createdAt: number;
 }
 
@@ -34,11 +44,41 @@ function invalidateCandidate(session: LoadedJarSession): void {
   }
 }
 
+function normalizeOptions(input: ItemOptionOverride[] | undefined): ItemOptionOverride[] {
+  if (!Array.isArray(input)) return [];
+  const byId = new Map<number, ItemOptionOverride>();
+  for (const raw of input) {
+    const optionId = Math.round(Number(raw?.optionId));
+    const param = Math.round(Number(raw?.param));
+    if (!Number.isInteger(optionId) || optionId < 0 || optionId > 32767) continue;
+    if (!Number.isInteger(param) || param < -2147483648 || param > 2147483647) continue;
+    byId.set(optionId, {
+      optionId,
+      param,
+      enabled: raw?.enabled !== false,
+      note: String(raw?.note || '').slice(0, 300),
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.optionId - b.optionId);
+}
+
+function normalizeCustomIcon(input: WorkspaceNewItemOperation['customIcon'] | undefined): WorkspaceNewItemOperation['customIcon'] | undefined {
+  if (!input) return undefined;
+  const pngBase64 = String(input.pngBase64 || '').replace(/^data:image\/png;base64,/i, '').trim();
+  if (!pngBase64 || pngBase64.length > 4_000_000) return undefined;
+  return {
+    fileName: String(input.fileName || 'item-icon.png').slice(0, 180),
+    pngBase64,
+  };
+}
+
 function cloneOperation(operation: PatchWorkspaceOperation): PatchWorkspaceOperation {
   if (operation.kind === 'NEW_ITEM') {
     return {
       ...operation,
       values: [...operation.values],
+      customIcon: normalizeCustomIcon(operation.customIcon),
+      optionOverrides: normalizeOptions(operation.optionOverrides).map((option) => ({ ...option })),
     };
   }
 
@@ -89,7 +129,7 @@ export function isNewItemIdQueued(session: LoadedJarSession, id: string): boolea
 
 export function queueNewItemOperation(
   session: LoadedJarSession,
-  input: { sourceClass: string; values: string[] }
+  input: { sourceClass: string; values: string[]; optionOverrides?: ItemOptionOverride[]; customIcon?: WorkspaceNewItemOperation['customIcon'] }
 ): WorkspaceNewItemOperation {
   const sourceClass = normalizeSourceClass(input.sourceClass);
   const values = input.values.map((value) => String(value ?? ''));
@@ -105,6 +145,8 @@ export function queueNewItemOperation(
     id: `new-item:${sourceClass}:${itemId}:${Date.now()}`,
     sourceClass,
     values,
+    customIcon: normalizeCustomIcon(input.customIcon),
+    optionOverrides: normalizeOptions(input.optionOverrides),
     createdAt: Date.now(),
   };
 
@@ -176,6 +218,8 @@ export function importPatchWorkspaceOperations(
         id: String(raw.id || `new-item:${Date.now()}`),
         sourceClass: normalizeSourceClass(raw.sourceClass),
         values: raw.values.map((value) => String(value ?? '')),
+        customIcon: normalizeCustomIcon(raw.customIcon),
+        optionOverrides: normalizeOptions(raw.optionOverrides),
         createdAt: Number(raw.createdAt) || Date.now(),
       });
     } else if (raw.kind === 'MULTIPLAYER_LITE' && raw.config) {
@@ -204,6 +248,8 @@ export function getPatchWorkspaceFingerprint(session: LoadedJarSession): string 
           kind: operation.kind,
           sourceClass: operation.sourceClass,
           values: operation.values,
+          customIcon: operation.customIcon ? { fileName: operation.customIcon.fileName, pngBase64: operation.customIcon.pngBase64 } : undefined,
+          optionOverrides: normalizeOptions(operation.optionOverrides),
         };
       }
       return {

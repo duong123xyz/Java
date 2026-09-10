@@ -5,11 +5,7 @@ export interface ItemRecord {
   sourceField: string;
   sourceTableIndex: number;
   sourceRow: number;
-
-  // Raw original string array extracted from bytecode cells
   rawValues: string[];
-
-  // Dynamic schema mapped fields (15 fields)
   id: string;
   type: string;
   gender: string;
@@ -25,38 +21,47 @@ export interface ItemRecord {
   head: string;
   body: string;
   leg: string;
-
-  // Validation & diagnostics
   schemaMismatch?: boolean;
   actualColumnCount: number;
   expectedColumnCount: number;
-
-  // Evidence
   evidence: {
     instructionOffsets: number[];
     summary: string;
   };
-
-  // Fine-grained cell-level bytecode evidence for patch planning
   cellEvidences?: Record<number, CellEvidence>;
 }
 
+/**
+ * Runtime option của một item instance (a/ab.b -> a/H[]).
+ * optionId trỏ tới a/a/a/v.u; param là giá trị thay cho ký tự # trong mô tả option.
+ */
+export interface ItemOptionOverride {
+  optionId: number;
+  param: number;
+  enabled: boolean;
+  note?: string;
+}
+
+export interface ItemOptionTemplateRecord {
+  id: number;
+  name: string;
+  sourceRow: number;
+}
+
 export interface ItemDraft {
-  // Unique identity based on source location: `${sourceClass}|${sourceField}|${sourceRow}`
   key: string;
   sourceClass: string;
   sourceField: string;
   sourceTableIndex: number;
   sourceRow: number;
-
-  // Original unmodified values from JAR
   originalValues: string[];
-
-  // Current working draft values
   values: string[];
-
-  // Indices of fields that differ from originalValues (0..14)
   dirtyFields: number[];
+  /**
+   * Không nằm trong 15 cột ItemTemplate. Writer runtime dùng danh sách này để
+   * SET/thêm option cho mọi instance có cùng ItemTemplate ID trong game.
+   */
+  optionOverrides?: ItemOptionOverride[];
   isDirty: boolean;
 }
 

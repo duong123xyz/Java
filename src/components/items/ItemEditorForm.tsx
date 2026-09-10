@@ -1,22 +1,34 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  RotateCcw,
   AlertTriangle,
+  CheckCircle2,
   FileCode,
+  Plus,
+  RotateCcw,
+  Search,
+  Shield,
   Sliders,
-  CheckCircle,
-  Copy,
-  Check,
+  Sparkles,
   Table,
-  Layers,
+  Trash2,
+  Zap,
 } from 'lucide-react';
-import { ItemRecord, ItemDraft } from '../../types/item';
+import {
+  ItemDraft,
+  ItemOptionOverride,
+  ItemOptionTemplateRecord,
+  ItemRecord,
+} from '../../types/item';
 import { LoadedJarSession } from '../../types/jar';
 import {
-  ITEM_SCHEMA_FIELDS,
-  validateFieldValue,
   findDuplicateIds,
+  ITEM_SCHEMA_FIELDS,
+  setItemOptionOverrides,
+  validateFieldValue,
 } from '../../services/itemDraftService';
+import { parseClassFile } from '../../services/classFileParser';
+import { reconstructStringArrayTable } from '../../services/stringArrayTableAnalyzer';
+import { SmallImagePreview } from '../game-data/SmallImagePreview';
 import { PatchPlanTab } from './PatchPlanTab';
 
 interface ItemEditorFormProps {
@@ -30,6 +42,67 @@ interface ItemEditorFormProps {
   onResetItem: () => void;
 }
 
+type SubTab = 'stats' | 'template' | 'diff' | 'patch';
+
+type OptionCacheSession = LoadedJarSession & {
+  __itemOptionTemplates?: ItemOptionTemplateRecord[];
+};
+
+const IMPORTANT_OPTION_IDS = [0, 6, 7, 14, 47, 48, 49, 50];
+const JAVA_INT_MIN = -2147483648;
+const JAVA_INT_MAX = 2147483647;
+
+function normalizeSearch(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function renderOptionPreview(name: string, param: number): string {
+  if (!name) return `Option #${param}`;
+  return name.includes('#') ? name.replace(/#/g, String(param)) : `${name} · ${param}`;
+}
+
+async function analyzeOptionTemplates(session: LoadedJarSession): Promise<ItemOptionTemplateRecord[]> {
+  const cached = (session as OptionCacheSession).__itemOptionTemplates;
+  if (cached?.length) return cached;
+
+  const entry = session.entries.find((candidate) => candidate.path === 'a/a/a/v.class')?.zipEntry
+    ?? session.zip.file('a/a/a/v.class');
+  if (!entry) throw new Error('Không tìm thấy a/a/a/v.class (bảng ItemOptionTemplate).');
+
+  const buffer = await entry.async('arraybuffer');
+  const parsed = parseClassFile(buffer);
+  if (parsed.status !== 'valid' || parsed.remainingBytes !== 0) {
+    throw new Error('a/a/a/v.class không parse VALID.');
+  }
+  const clinit = parsed.methods.find((method) => method.name === '<clinit>');
+  if (!clinit?.code?.instructions) throw new Error('a/a/a/v.<clinit> không có instructions.');
+
+  const table = reconstructStringArrayTable(
+    'a/a/a/v',
+    'u',
+    '[[Ljava/lang/String;',
+    0,
+    clinit.code.instructions,
+    parsed.constantPool,
+    2
+  );
+  if (table.parseError) throw new Error(`Không đọc được bảng option: ${table.parseError}`);
+
+  const rows: ItemOptionTemplateRecord[] = [];
+  for (const row of table.rows) {
+    const id = Number(row.values[0]);
+    if (!Number.isInteger(id) || id < 0 || id > 32767) continue;
+    rows.push({ id, name: String(row.values[1] || `Option #${id}`), sourceRow: row.rowIndex });
+  }
+  rows.sort((a, b) => a.id - b.id);
+  (session as OptionCacheSession).__itemOptionTemplates = rows;
+  return rows;
+}
+
 export function ItemEditorForm({
   session,
   item,
@@ -40,411 +113,295 @@ export function ItemEditorForm({
   onResetField,
   onResetItem,
 }: ItemEditorFormProps) {
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'editor' | 'diff' | 'patch'>('editor');
+  const [activeSubTab, setActiveSubTab] = useState<SubTab>('stats');
+  const [optionTemplates, setOptionTemplates] = useState<ItemOptionTemplateRecord[]>([]);
+  const [optionError, setOptionError] = useState<string | null>(null);
+  const [optionQuery, setOptionQuery] = useState('');
+  const [showPicker, setShowPicker] = useState(false);
 
-  const handleCopy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(label);
-    setTimeout(() => setCopiedField(null), 1800);
-  };
+  useEffect(() => {
+    let active = true;
+    setOptionError(null);
+    void analyzeOptionTemplates(session)
+      .then((rows) => active && setOptionTemplates(rows))
+      .catch((error: unknown) => active && setOptionError(error instanceof Error ? error.message : String(error)));
+    return () => { active = false; };
+  }, [session]);
 
   const currentDraftId = draft.values[0] ?? '';
-  const duplicateLocations = useMemo(() => {
-    return findDuplicateIds(currentDraftId, draft.key, allItems, drafts);
-  }, [currentDraftId, draft.key, allItems, drafts]);
+  const duplicateLocations = useMemo(
+    () => findDuplicateIds(currentDraftId, draft.key, allItems, drafts),
+    [currentDraftId, draft.key, allItems, drafts, draft.values]
+  );
 
-  const changedFields = useMemo(() => {
-    return draft.dirtyFields.map((colIdx) => {
-      const meta = ITEM_SCHEMA_FIELDS[colIdx];
-      return {
-        colIndex: colIdx,
-        label: meta ? meta.label : `Cột ${colIdx}`,
-        description: meta ? meta.description : '',
-        original: draft.originalValues[colIdx] ?? '',
-        current: draft.values[colIdx] ?? '',
-      };
-    });
-  }, [draft]);
+  const overrides = draft.optionOverrides ?? [];
+  const optionById = useMemo(
+    () => new Map(optionTemplates.map((option) => [option.id, option])),
+    [optionTemplates]
+  );
 
-  const generalFields = ITEM_SCHEMA_FIELDS.filter((f) => f.group === 'general');
-  const requirementsFields = ITEM_SCHEMA_FIELDS.filter((f) => f.group === 'requirements');
-  const visualFields = ITEM_SCHEMA_FIELDS.filter((f) => f.group === 'visual');
+  const notifyOptionChange = (next: ItemOptionOverride[]) => {
+    setItemOptionOverrides(drafts, item, next);
+    // Trigger ItemsBrowser revision + dirty count without changing the template ID.
+    onUpdateField(0, draft.values[0] ?? item.id);
+  };
 
-  const renderFieldInput = (colIndex: number) => {
+  const addOption = (optionId: number) => {
+    if (overrides.some((entry) => entry.optionId === optionId)) return;
+    notifyOptionChange([
+      ...overrides,
+      { optionId, param: 1, enabled: true, note: '' },
+    ]);
+    setOptionQuery('');
+    setShowPicker(false);
+  };
+
+  const updateOption = (optionId: number, patch: Partial<ItemOptionOverride>) => {
+    notifyOptionChange(
+      overrides.map((entry) => entry.optionId === optionId ? { ...entry, ...patch } : entry)
+    );
+  };
+
+  const removeOption = (optionId: number) => {
+    notifyOptionChange(overrides.filter((entry) => entry.optionId !== optionId));
+  };
+
+  const pickerResults = useMemo(() => {
+    const q = normalizeSearch(optionQuery);
+    const existing = new Set(overrides.map((entry) => entry.optionId));
+    const list = optionTemplates.filter((option) => !existing.has(option.id));
+    if (!q) {
+      const important = IMPORTANT_OPTION_IDS
+        .map((id) => list.find((entry) => entry.id === id))
+        .filter((entry): entry is ItemOptionTemplateRecord => Boolean(entry));
+      const rest = list.filter((entry) => !IMPORTANT_OPTION_IDS.includes(entry.id));
+      return [...important, ...rest].slice(0, 60);
+    }
+    return list.filter((option) => {
+      return String(option.id).includes(q) || normalizeSearch(option.name).includes(q);
+    }).slice(0, 80);
+  }, [optionTemplates, optionQuery, overrides]);
+
+  const changedFields = useMemo(() => draft.dirtyFields.map((colIndex) => {
+    const meta = ITEM_SCHEMA_FIELDS[colIndex];
+    return {
+      colIndex,
+      label: meta?.label ?? `Cột ${colIndex}`,
+      original: draft.originalValues[colIndex] ?? '',
+      current: draft.values[colIndex] ?? '',
+    };
+  }), [draft.dirtyFields, draft.originalValues, draft.values]);
+
+  const renderField = (colIndex: number) => {
     const meta = ITEM_SCHEMA_FIELDS[colIndex];
     if (!meta) return null;
-
     const value = draft.values[colIndex] ?? '';
     const originalValue = draft.originalValues[colIndex] ?? '';
-    const isFieldDirty = draft.dirtyFields.includes(colIndex);
-    const validationError = validateFieldValue(colIndex, value);
-    const isLongText = meta.key === 'description';
-
+    const dirty = draft.dirtyFields.includes(colIndex);
+    const error = validateFieldValue(colIndex, value);
+    const isTextArea = meta.key === 'description';
     return (
-      <div
-        key={meta.key}
-        className={`p-2.5 rounded-lg border transition-all ${
-          isFieldDirty
-            ? 'bg-amber-950/20 border-amber-500/50 shadow-xs'
-            : 'bg-zinc-950/60 border-zinc-800/80 hover:border-zinc-700/80'
-        }`}
-      >
-        <div className="flex items-center justify-between mb-1.5 gap-2">
-          <label
-            htmlFor={`field-input-${meta.key}`}
-            className="text-[11px] font-mono font-medium text-zinc-300 flex items-center gap-1.5"
-            title={`${meta.key}: ${meta.description}`}
-          >
-            <span className="text-zinc-500 text-[10px]">#{colIndex}</span>
-            <span className={isFieldDirty ? 'text-amber-300 font-bold' : 'text-zinc-200'}>
-              {meta.label}
-            </span>
-            <span className="text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-500" title="Tên trường kỹ thuật trong dữ liệu">
-              {meta.key}
-            </span>
-            {meta.type === 'number' && (
-              <span className="text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400">
-                số
-              </span>
-            )}
-          </label>
-
-          <div className="flex items-center gap-1.5">
-            {isFieldDirty && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono font-semibold border border-amber-500/30">
-                Đã sửa
-              </span>
-            )}
-            {isFieldDirty && (
-              <button
-                type="button"
-                onClick={() => onResetField(colIndex)}
-                className="text-[10px] font-mono text-zinc-400 hover:text-amber-300 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700 cursor-pointer transition-colors"
-                title={`Khôi phục ${meta.label} về giá trị gốc: "${originalValue}"`}
-              >
-                <RotateCcw className="w-2.5 h-2.5" />
-                <span>Khôi phục</span>
-              </button>
-            )}
+      <div key={meta.key} className={`rounded-xl border p-3 ${dirty ? 'border-amber-300 bg-amber-50/60' : 'border-zinc-200 bg-white'}`}>
+        <div className="mb-1.5 flex items-start justify-between gap-2">
+          <div>
+            <div className="text-[11px] font-semibold text-zinc-800">{meta.label}</div>
+            <div className="text-[9px] font-mono text-zinc-400">#{colIndex} · {meta.key}</div>
           </div>
+          {dirty && (
+            <button type="button" onClick={() => onResetField(colIndex)} className="text-[10px] text-zinc-500 hover:text-amber-700 flex items-center gap-1 cursor-pointer">
+              <RotateCcw className="w-3 h-3" /> Gốc
+            </button>
+          )}
         </div>
-
-        {isLongText ? (
-          <textarea
-            id={`field-input-${meta.key}`}
-            value={value}
-            rows={2}
-            onChange={(e) => onUpdateField(colIndex, e.target.value)}
-            className={`w-full bg-zinc-900 border rounded px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none font-sans resize-y ${
-              validationError
-                ? 'border-red-500 focus:border-red-400'
-                : isFieldDirty
-                ? 'border-amber-500/60 focus:border-amber-400'
-                : 'border-zinc-750 focus:border-amber-500/60'
-            }`}
-          />
+        {isTextArea ? (
+          <textarea rows={2} value={value} onChange={(e) => onUpdateField(colIndex, e.target.value)} className={`w-full rounded-lg border px-2.5 py-2 text-[11px] focus:outline-none ${error ? 'border-red-400' : 'border-zinc-200 focus:border-amber-300'}`} />
         ) : (
-          <input
-            id={`field-input-${meta.key}`}
-            type="text"
-            value={value}
-            onChange={(e) => onUpdateField(colIndex, e.target.value)}
-            className={`w-full bg-zinc-900 border rounded px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none font-mono ${
-              validationError
-                ? 'border-red-500 focus:border-red-400'
-                : isFieldDirty
-                ? 'border-amber-500/60 focus:border-amber-400'
-                : 'border-zinc-750 focus:border-amber-500/60'
-            }`}
-          />
+          <input value={value} onChange={(e) => onUpdateField(colIndex, e.target.value)} className={`w-full rounded-lg border px-2.5 py-2 text-[11px] font-mono focus:outline-none ${error ? 'border-red-400' : 'border-zinc-200 focus:border-amber-300'}`} />
         )}
-
-        <div className="mt-1 text-[10px] text-zinc-500 leading-relaxed">
-          {meta.description}
-        </div>
-
-        {validationError && (
-          <div className="mt-1 text-[11px] text-red-400 font-mono flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3 shrink-0" />
-            <span>{validationError}</span>
-          </div>
-        )}
-
-        {isFieldDirty && (
-          <div className="mt-1 text-[10px] text-zinc-400 font-mono flex items-center justify-between">
-            <span className="truncate">
-              Giá trị gốc: <strong className="text-zinc-300">&quot;{originalValue}&quot;</strong>
-            </span>
-          </div>
-        )}
+        <div className="mt-1 text-[9px] leading-relaxed text-zinc-500">{meta.description}</div>
+        {error && <div className="mt-1 text-[10px] text-red-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{error}</div>}
+        {dirty && <div className="mt-1 text-[9px] text-zinc-400">Gốc: <span className="font-mono">{originalValue}</span></div>}
       </div>
     );
   };
 
+  const generalFields = ITEM_SCHEMA_FIELDS.filter((field) => field.group === 'general');
+  const requirementFields = ITEM_SCHEMA_FIELDS.filter((field) => field.group === 'requirements');
+  const visualFields = ITEM_SCHEMA_FIELDS.filter((field) => field.group === 'visual');
+
   return (
-    <div className="space-y-4">
-      <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-mono font-bold">
-                ID: {draft.values[0] || item.id}
-              </span>
-              <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs font-mono">
-                {item.sourceClass}:{item.sourceRow}
-              </span>
-
-              {draft.isDirty ? (
-                <span className="px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-700/80 text-[11px] font-mono font-semibold flex items-center gap-1 animate-pulse">
-                  Đã sửa ({draft.dirtyFields.length} trường)
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded bg-emerald-950/50 text-emerald-400 border border-emerald-800/50 text-[11px] font-mono flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3" /> Dữ liệu gốc trong bộ nhớ
-                </span>
-              )}
+    <div className="space-y-3">
+      <div className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <SmallImagePreview session={session} imageId={draft.values[6]} alt={draft.values[3] || item.name} variant="icon" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="font-bold text-zinc-900 truncate">{draft.values[3] || item.name || '(Chưa có tên)'}</h2>
+                <span className="px-2 py-0.5 rounded-full bg-zinc-50 border border-zinc-200 text-[10px] font-mono">ID {draft.values[0] || item.id}</span>
+                {draft.isDirty && <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] text-amber-700 font-semibold">Có nháp</span>}
+              </div>
+              <div className="text-[10px] text-zinc-500 mt-1">{item.sourceClass}.u[{item.sourceRow}] · type {draft.values[1]} · icon {draft.values[6]}</div>
             </div>
-
-            <h2 className="text-base font-bold text-zinc-100 mt-1 font-sans">
-              {draft.values[3] || item.name || '(Chưa có tên)'}
-            </h2>
           </div>
-
-          <div className="flex items-center gap-2">
-            {draft.isDirty && (
-              <button
-                type="button"
-                onClick={onResetItem}
-                className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-amber-300 text-xs font-mono flex items-center gap-1.5 border border-zinc-700 cursor-pointer transition-colors"
-                title="Khôi phục toàn bộ thay đổi của vật phẩm này về dữ liệu gốc trong JAR"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Khôi phục vật phẩm</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => handleCopy(draft.values[0] || item.id, 'id')}
-              className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs flex items-center gap-1 border border-zinc-750 cursor-pointer"
-              title="Sao chép ID vật phẩm"
-            >
-              {copiedField === 'id' ? (
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-              ) : (
-                <Copy className="w-3.5 h-3.5" />
-              )}
+          {draft.isDirty && (
+            <button type="button" onClick={onResetItem} className="px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[10px] flex items-center gap-1 cursor-pointer">
+              <RotateCcw className="w-3 h-3" /> Trả item về gốc
             </button>
-          </div>
+          )}
         </div>
 
         {duplicateLocations.length > 0 && (
-          <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-600/70 text-amber-200 text-xs font-mono space-y-1">
-            <div className="flex items-center gap-1.5 font-bold text-amber-300">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Phát hiện ID vật phẩm bị trùng: &quot;{currentDraftId}&quot;</span>
-            </div>
-            <p className="text-[11px] text-amber-200/80">
-              ID này cũng đang được sử dụng tại {duplicateLocations.length} vị trí khác trong JAR:
-            </p>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {duplicateLocations.map((dup) => (
-                <span
-                  key={dup.key}
-                  className="px-2 py-0.5 rounded bg-amber-900/60 border border-amber-700 text-[10px] text-amber-100"
-                >
-                  {dup.sourceClass}:{dup.sourceRow} ({dup.name || 'chưa có tên'})
-                </span>
-              ))}
-            </div>
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-800">
+            ID {currentDraftId} đang trùng {duplicateLocations.length} item khác. Đổi ID có thể làm shop/drop trỏ sai template.
           </div>
         )}
 
-        <div className="flex items-center gap-2 pt-1 border-t border-zinc-800/80 text-xs font-mono">
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('editor')}
-            className={`px-3 py-1 rounded-md cursor-pointer transition-colors flex items-center gap-1.5 ${
-              activeSubTab === 'editor'
-                ? 'bg-zinc-800 text-amber-300 border border-amber-500/40 font-semibold'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Chỉnh sửa 15 trường</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('diff')}
-            className={`px-3 py-1 rounded-md cursor-pointer transition-colors flex items-center gap-1.5 ${
-              activeSubTab === 'diff'
-                ? 'bg-zinc-800 text-amber-300 border border-amber-500/40 font-semibold'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-            }`}
-          >
-            <Table className="w-3.5 h-3.5" />
-            <span>So sánh (Gốc ↔ Bản nháp)</span>
-            {draft.dirtyFields.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-bold">
-                {draft.dirtyFields.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('patch')}
-            className={`px-3 py-1 rounded-md cursor-pointer transition-colors flex items-center gap-1.5 ${
-              activeSubTab === 'patch'
-                ? 'bg-zinc-800 text-amber-300 border border-amber-500/40 font-semibold'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-            }`}
-          >
-            <FileCode className="w-3.5 h-3.5" />
-            <span>Kế hoạch vá bytecode</span>
-            {draft.dirtyFields.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-bold">
-                {draft.dirtyFields.length}
-              </span>
-            )}
-          </button>
+        <div className="mt-3 flex items-center gap-1.5 overflow-x-auto border-t border-zinc-100 pt-2">
+          <TabButton active={activeSubTab === 'stats'} onClick={() => setActiveSubTab('stats')} icon={<Zap className="w-3.5 h-3.5" />} label={`Chỉ số / Option (${overrides.length})`} />
+          <TabButton active={activeSubTab === 'template'} onClick={() => setActiveSubTab('template')} icon={<Sliders className="w-3.5 h-3.5" />} label="Template 15 trường" />
+          <TabButton active={activeSubTab === 'diff'} onClick={() => setActiveSubTab('diff')} icon={<Table className="w-3.5 h-3.5" />} label="So sánh" />
+          <TabButton active={activeSubTab === 'patch'} onClick={() => setActiveSubTab('patch')} icon={<FileCode className="w-3.5 h-3.5" />} label="Bytecode" />
         </div>
       </div>
 
       {activeSubTab === 'patch' ? (
         <PatchPlanTab session={session} item={item} draft={draft} />
       ) : activeSubTab === 'diff' ? (
-        <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-mono font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-2">
-              <Layers className="w-3.5 h-3.5 text-amber-400" />
-              <span>Khác biệt giữa dữ liệu gốc và bản nháp</span>
-            </h3>
-            {draft.dirtyFields.length > 0 && (
-              <button
-                type="button"
-                onClick={onResetItem}
-                className="text-[11px] font-mono text-zinc-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Khôi phục tất cả về gốc</span>
-              </button>
-            )}
-          </div>
-
-          {changedFields.length === 0 ? (
-            <div className="p-8 text-center text-xs font-mono text-zinc-500 border border-dashed border-zinc-800 rounded-lg">
-              Chưa có trường nào bị chỉnh sửa trong vật phẩm này. Dữ liệu khớp 100% với JAR gốc.
-            </div>
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
+          <div className="font-semibold text-sm text-zinc-900">Thay đổi của item</div>
+          {changedFields.length === 0 && overrides.length === 0 ? (
+            <div className="text-[11px] text-zinc-500">Chưa có thay đổi.</div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-zinc-800">
-              <table className="w-full text-left text-xs font-mono">
-                <thead className="bg-zinc-900 text-zinc-400 border-b border-zinc-800 text-[11px]">
-                  <tr>
-                    <th className="px-3 py-2 w-32">TRƯỜNG</th>
-                    <th className="px-3 py-2">GIÁ TRỊ GỐC</th>
-                    <th className="px-3 py-2">GIÁ TRỊ BẢN NHÁP</th>
-                    <th className="px-3 py-2 w-20 text-center">THAO TÁC</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60">
-                  {changedFields.map((field) => (
-                    <tr key={field.colIndex} className="bg-zinc-950/50 hover:bg-zinc-900/40">
-                      <td className="px-3 py-2 font-bold text-amber-300">
-                        {field.label}
-                        <span className="text-[10px] text-zinc-500 block font-normal">
-                          cột #{field.colIndex}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-zinc-400 break-all font-mono">
-                        <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800">
-                          {field.original || <span className="italic text-zinc-600">(trống)</span>}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-amber-200 font-bold break-all font-mono">
-                        <span className="px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800/60">
-                          {field.current || <span className="italic text-zinc-600">(trống)</span>}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <button
-                          type="button"
-                          onClick={() => onResetField(field.colIndex)}
-                          className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-300 text-[10px] font-mono border border-zinc-700 cursor-pointer"
-                          title="Khôi phục trường này về giá trị gốc"
-                        >
-                          Khôi phục
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              {changedFields.map((change) => (
+                <div key={change.colIndex} className="grid grid-cols-[150px_minmax(0,1fr)_minmax(0,1fr)] gap-2 rounded-lg border border-zinc-200 p-2 text-[10px]">
+                  <div className="font-semibold">{change.label}</div>
+                  <div className="font-mono text-zinc-500 break-all">Gốc: {change.original}</div>
+                  <div className="font-mono text-amber-700 break-all">Mới: {change.current}</div>
+                </div>
+              ))}
+              {overrides.map((override) => (
+                <div key={`opt-${override.optionId}`} className="rounded-lg border border-violet-200 bg-violet-50 p-2 text-[10px] flex items-center justify-between gap-3">
+                  <div><strong>{optionById.get(override.optionId)?.name || `Option #${override.optionId}`}</strong> <span className="font-mono text-zinc-500">ID {override.optionId}</span></div>
+                  <div className="font-mono text-violet-700">SET {override.param}</div>
+                </div>
+              ))}
             </div>
           )}
         </div>
+      ) : activeSubTab === 'template' ? (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] text-blue-800">
+            <strong>Phân biệt:</strong> 15 trường này là ItemTemplate metadata. HP, KI, Sức đánh, Giáp, Chí mạng, Hút HP/KI, Phản sát thương... không nằm ở đây; chúng nằm trong ItemOption và chỉnh ở tab <strong>Chỉ số / Option</strong>.
+          </div>
+          <FieldSection title="Thông tin cơ bản" fields={generalFields.map((f) => renderField(f.index))} />
+          <FieldSection title="Yêu cầu & kinh tế" fields={requirementFields.map((f) => renderField(f.index))} />
+          <FieldSection title="Hiển thị & ngoại hình" fields={visualFields.map((f) => renderField(f.index))} />
+        </div>
       ) : (
-        <div className="space-y-4">
-          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
-            <h3 className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-zinc-800/80">
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              <span>Thông tin chung</span>
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {generalFields.map((f) => renderFieldInput(f.index))}
+        <div className="space-y-3">
+          <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-[10px] text-violet-900">
+            <div className="font-semibold flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" /> Chỉ số thực của trang bị nằm ở ItemOption</div>
+            <div className="mt-1 leading-relaxed">
+              Game lưu option ở <span className="font-mono">a/ab.b -&gt; a/H[]</span>; mỗi option có <strong>Option ID</strong> + <strong>param</strong>. Bảng tên option được đọc trực tiếp từ <span className="font-mono">a/a/a/v.u</span>. Writer runtime sẽ SET option này cho mọi instance có ItemTemplate ID {draft.values[0] || item.id}, kể cả khi option đó trước đây chưa có.
             </div>
           </div>
 
-          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
-            <h3 className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-zinc-800/80">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Yêu cầu &amp; giá trị</span>
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {requirementsFields.map((f) => renderFieldInput(f.index))}
+          <div className="rounded-xl border border-zinc-200 bg-white p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[12px] font-semibold text-zinc-900">Option đang áp cho item</div>
+                <div className="text-[9px] text-zinc-500">{optionTemplates.length ? `${optionTemplates.length} option template đọc được từ JAR` : 'Đang đọc bảng option...'}</div>
+              </div>
+              <button type="button" onClick={() => setShowPicker((value) => !value)} className="px-2.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 hover:bg-violet-100 text-[10px] font-semibold text-violet-700 flex items-center gap-1 cursor-pointer">
+                <Plus className="w-3.5 h-3.5" /> Thêm chỉ số
+              </button>
+            </div>
+
+            {optionError && <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] text-red-700">{optionError}</div>}
+
+            {showPicker && (
+              <div className="relative mt-3 rounded-xl border border-violet-200 bg-white p-2 shadow-sm">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
+                  <input autoFocus value={optionQuery} onChange={(e) => setOptionQuery(e.target.value)} placeholder="Tìm: HP, KI, sức đánh, giáp, chí mạng, hút, phản, xuyên, né... hoặc Option ID" className="w-full pl-8 pr-3 py-2 rounded-lg border border-zinc-200 text-[11px] focus:outline-none focus:border-violet-300" />
+                </div>
+                <div className="mt-2 max-h-64 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+                  {pickerResults.map((option) => (
+                    <button key={option.id} type="button" onClick={() => addOption(option.id)} className="rounded-lg border border-zinc-200 px-2.5 py-2 text-left hover:border-violet-300 hover:bg-violet-50 cursor-pointer">
+                      <div className="text-[10px] font-semibold text-zinc-800">{option.name}</div>
+                      <div className="text-[9px] font-mono text-zinc-500">Option ID {option.id}</div>
+                    </button>
+                  ))}
+                  {pickerResults.length === 0 && <div className="p-3 text-[10px] text-zinc-500">Không tìm thấy option phù hợp.</div>}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 space-y-2">
+              {overrides.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-5 text-center text-[11px] text-zinc-500">
+                  Chưa có override chỉ số. Bấm <strong>Thêm chỉ số</strong> để thêm HP/KI/Sức đánh/Giáp/Chí mạng hoặc bất kỳ option nào có trong JAR.
+                </div>
+              ) : overrides.map((override) => {
+                const template = optionById.get(override.optionId);
+                return (
+                  <div key={override.optionId} className={`rounded-xl border p-3 ${override.enabled ? 'border-violet-200 bg-violet-50/40' : 'border-zinc-200 bg-zinc-50 opacity-70'}`}>
+                    <div className="grid grid-cols-1 lg:grid-cols-[minmax(220px,1fr)_180px_auto] gap-2 items-end">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <label className="flex items-center gap-1.5 text-[10px] font-semibold text-zinc-800 cursor-pointer">
+                            <input type="checkbox" checked={override.enabled} onChange={(e) => updateOption(override.optionId, { enabled: e.target.checked })} />
+                            {template?.name || `Option #${override.optionId}`}
+                          </label>
+                          <span className="px-1.5 py-0.5 rounded-full border border-zinc-200 bg-white text-[9px] font-mono">ID {override.optionId}</span>
+                        </div>
+                        <div className="mt-1 text-[9px] text-violet-700">Preview: {renderOptionPreview(template?.name || '', override.param)}</div>
+                      </div>
+                      <label>
+                        <div className="text-[9px] font-mono text-zinc-500 mb-1">Giá trị / param</div>
+                        <input type="number" min={JAVA_INT_MIN} max={JAVA_INT_MAX} value={override.param} onChange={(e) => updateOption(override.optionId, { param: Math.max(JAVA_INT_MIN, Math.min(JAVA_INT_MAX, Math.round(Number(e.target.value) || 0))) })} className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-[11px] font-mono focus:outline-none focus:border-violet-300" />
+                      </label>
+                      <button type="button" onClick={() => removeOption(override.optionId)} className="px-2.5 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-[10px] flex items-center gap-1 cursor-pointer">
+                        <Trash2 className="w-3.5 h-3.5" /> Xóa
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3.5 space-y-3">
-            <h3 className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-zinc-800/80">
-              <span className="w-2 h-2 rounded-full bg-blue-400" />
-              <span>Hiển thị &amp; sprite</span>
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {visualFields.map((f) => renderFieldInput(f.index))}
-            </div>
-          </div>
-
-          <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3.5 space-y-2">
-            <h3 className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-              <FileCode className="w-3.5 h-3.5 text-zinc-500" />
-              <span>Thông tin nguồn kỹ thuật (chỉ đọc)</span>
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
-              <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">CLASS NGUỒN</span>
-                <span className="text-zinc-200 font-bold truncate block" title={item.sourceClass}>
-                  {item.sourceClass}.class
-                </span>
-              </div>
-              <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">FIELD NGUỒN</span>
-                <span className="text-zinc-200 font-bold">{item.sourceField} ([[LString;)</span>
-              </div>
-              <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">CHỈ SỐ BẢNG NGUỒN</span>
-                <span className="text-zinc-200 font-bold">#{item.sourceTableIndex}</span>
-              </div>
-              <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                <span className="text-zinc-500 text-[10px] block">DÒNG NGUỒN</span>
-                <span className="text-amber-400 font-bold">{item.sourceRow}</span>
-              </div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <div className="text-[10px] font-semibold text-emerald-800 flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> Các chỉ số quan trọng đã xác minh trong JAR</div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {IMPORTANT_OPTION_IDS.map((id) => {
+                const option = optionById.get(id);
+                if (!option) return null;
+                return <button key={id} type="button" onClick={() => addOption(id)} disabled={overrides.some((entry) => entry.optionId === id)} className="px-2 py-1 rounded-lg border border-emerald-200 bg-white disabled:opacity-40 text-[9px] text-emerald-800 cursor-pointer">#{id} {option.name}</button>;
+              })}
             </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button type="button" onClick={onClick} className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-medium flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${active ? 'bg-violet-50 border-violet-200 text-violet-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+      {icon}{label}
+    </button>
+  );
+}
+
+function FieldSection({ title, fields }: { title: string; fields: React.ReactNode[] }) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+      <div className="mb-2 text-[11px] font-semibold text-zinc-800">{title}</div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">{fields}</div>
     </div>
   );
 }

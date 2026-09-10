@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { LoadedJarSession, CandidateOutputJar, ClassFileInfo } from '../types/jar';
 import { JvmInstruction, MethodInfo } from '../types/bytecode';
-import { StringTableRow } from '../types/item';
+import { ItemDraft, StringTableRow } from '../types/item';
 import {
   CellEvidence,
   ClassPatchGroup,
@@ -67,7 +67,11 @@ import {
   serializeSkillDraftValues,
 } from './skillDataService';
 import { parseClassFile } from './classFileParser';
-import { getPatchWorkspaceFingerprint } from './patchWorkspaceStateService';
+import {
+  getPatchWorkspaceFingerprint,
+  getPatchWorkspaceOperations,
+  WorkspaceNewItemOperation,
+} from './patchWorkspaceStateService';
 
 export type DraftTestPhase =
   | 'COLLECTING'
@@ -851,6 +855,14 @@ function stableItemDraftFingerprint(session: LoadedJarSession): string {
       key: draft.key,
       dirtyFields: [...draft.dirtyFields],
       values: draft.values,
+      optionOverrides: (draft.optionOverrides ?? [])
+        .map((option) => ({
+          optionId: option.optionId,
+          param: option.param,
+          enabled: option.enabled !== false,
+          note: option.note || '',
+        }))
+        .sort((a, b) => a.optionId - b.optionId),
     }));
   return JSON.stringify(drafts);
 }
@@ -912,7 +924,16 @@ export async function buildDraftTestCandidate(
 
     // 1) Vật phẩm — writer hiện tại đã hỗ trợ.
     const itemDrafts = getDirtyDrafts(session.itemDrafts);
-    summary.itemDrafts = itemDrafts.length;
+    const workspaceNewItems = getPatchWorkspaceOperations(session).filter(
+      (operation): operation is WorkspaceNewItemOperation => operation.kind === 'NEW_ITEM'
+    );
+    const workspaceItemsWithOptions = workspaceNewItems.filter((operation) =>
+      (operation.optionOverrides ?? []).some((option) => option.enabled !== false)
+    );
+    // Một item mới có ItemOption cũng là thay đổi runtime thật. Tính nó vào summary
+    // để buildDraftTestCandidate không trả NO_CHANGES trước khi helper được ghi vào JAR.
+    summary.itemDrafts = itemDrafts.length + workspaceItemsWithOptions.length;
+    const itemOptionRuntimeRules = collectItemOptionRuntimeRules(itemDrafts, workspaceNewItems);
 
     if (itemDrafts.length > 0) {
       const itemAnalysis =
@@ -957,6 +978,43 @@ export async function buildDraftTestCandidate(
           schemaColumns: itemAnalysis.diagnostics.schemaColumns,
           group,
           label: 'Vật phẩm',
+        });
+      }
+    }
+
+    // Runtime ItemOption writer has TWO distinct targets in this integrated JAR:
+    // 1) a/ab.b (a/H[]) is the J2ME/client representation used to DISPLAY options.
+    // 2) a/a/H.b (a/a/w[]) is the gameplay/stat representation consumed by
+    //    a/a/l for HP/KI/damage/armor/crit. V21-V26 only patched (1), which is
+    //    why '+200% sức đánh' could be visible but did not change combat stats.
+    // Keep the client tick hook for UI, and additionally hook a/a/w.fU() so the
+    // gameplay item gets the same option BEFORE every stat calculation.
+    const itemOptionRuntimeClasses = new Map<string, ArrayBuffer>();
+    let itemOptionRuntimePatchCount = 0;
+    if (itemOptionRuntimeRules.length > 0) {
+      try {
+        const loopEntry = session.zip.file('a/bN.class');
+        if (!loopEntry) throw new Error('Không tìm thấy a/bN.class để gắn ItemOption client writer.');
+        const loopBytes = await loopEntry.async('arraybuffer');
+        const patched = patchItemOptionTickHook(loopBytes, itemOptionRuntimeRules);
+
+        const statEntry = session.zip.file('a/a/w.class');
+        if (!statEntry) throw new Error('Không tìm thấy a/a/w.class để gắn ItemOption gameplay writer.');
+        const statBytes = await statEntry.async('arraybuffer');
+        const statPatched = patchItemOptionServerStatHook(statBytes);
+
+        itemOptionRuntimeClasses.set('a/bN.class', patched.classBytes);
+        itemOptionRuntimeClasses.set('a/a/w.class', statPatched);
+        itemOptionRuntimeClasses.set(ITEM_OPTION_HELPER_PATH, patched.helperBytes);
+        itemOptionRuntimeClasses.set(ITEM_OPTION_BRIDGE_PATH, patched.bridgeBytes);
+        itemOptionRuntimePatchCount = 4 + patched.ruleCount;
+      } catch (error: unknown) {
+        blockers.push({
+          area: 'Vật phẩm',
+          count: Math.max(1, itemOptionRuntimeRules.length),
+          message: `ItemOption runtime writer: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         });
       }
     }
@@ -1699,6 +1757,7 @@ export async function buildDraftTestCandidate(
     const rewriteJobs = merged.jobs;
     if (
       rewriteJobs.length === 0 &&
+      itemOptionRuntimeClasses.size === 0 &&
       mechanicsResult.rewrittenClasses.size === 0 &&
       bossResult.rewrittenClasses.size === 0 &&
       characterResult.rewrittenClasses.size === 0
@@ -1714,6 +1773,7 @@ export async function buildDraftTestCandidate(
       'REWRITING',
       `Đang rewrite ${
         rewriteJobs.length +
+        itemOptionRuntimeClasses.size +
         mechanicsResult.rewrittenClasses.size +
         bossResult.rewrittenClasses.size +
         characterResult.rewrittenClasses.size
@@ -1729,6 +1789,20 @@ export async function buildDraftTestCandidate(
       rewritten.set(normalizeClassEntryPath(path), bytes);
     }
     totalCells += mechanicsResult.appliedPatchCount;
+
+    for (const [path, bytes] of itemOptionRuntimeClasses) {
+      const normalizedPath = normalizeClassEntryPath(path);
+      if (rewritten.has(normalizedPath)) {
+        return {
+          status: 'FAILED',
+          blockers: [],
+          summary,
+          errorMessage: `Xung đột writer ItemOption: ${normalizedPath} đã được writer khác sửa.`,
+        };
+      }
+      rewritten.set(normalizedPath, bytes);
+    }
+    totalCells += itemOptionRuntimePatchCount;
 
     // Boss writer chạy trên chính bytes Mechanics đã rewrite, nên patch/TM được hợp nhất.
     for (const [path, bytes] of bossResult.rewrittenClasses) {
@@ -1998,6 +2072,10 @@ const GOLD_HELPER_INTERNAL_NAME = 'patch/PanelGlobalGoldRuntime';
 const GOLD_HELPER_PATH = `${GOLD_HELPER_INTERNAL_NAME}.class`;
 const GENERIC_DROP_HELPER_INTERNAL_NAME = 'patch/PanelGenericMobDropRuntime';
 const GENERIC_DROP_HELPER_PATH = `${GENERIC_DROP_HELPER_INTERNAL_NAME}.class`;
+const ITEM_OPTION_HELPER_INTERNAL_NAME = 'patch/PanelItemOptionRuntime';
+const ITEM_OPTION_HELPER_PATH = `${ITEM_OPTION_HELPER_INTERNAL_NAME}.class`;
+const ITEM_OPTION_BRIDGE_INTERNAL_NAME = 'a/PanelItemOptionBridge';
+const ITEM_OPTION_BRIDGE_PATH = `${ITEM_OPTION_BRIDGE_INTERNAL_NAME}.class`;
 
 function readU2(view: DataView, offset: number): number {
   return view.getUint16(offset, false);
@@ -2863,6 +2941,1113 @@ function patchFlexibleGemQuantity(
   };
 }
 
+
+
+interface ItemOptionRuntimeRule {
+  itemId: number;
+  optionId: number;
+  param: number;
+}
+
+/**
+ * Collect per-item gameplay options from ItemDraft. The 15-column ItemTemplate
+ * table only owns metadata; the live stat list is a.ab.b : a.H[].
+ */
+function collectItemOptionRuntimeRules(
+  drafts: ItemDraft[],
+  newItems: WorkspaceNewItemOperation[] = []
+): ItemOptionRuntimeRule[] {
+  const byKey = new Map<string, ItemOptionRuntimeRule>();
+
+  const addRules = (
+    itemIdRaw: unknown,
+    itemName: string,
+    options: Array<{ optionId: number; param: number; enabled: boolean; note?: string }> | undefined
+  ) => {
+    if (!options?.length) return;
+
+    const itemId = Number(itemIdRaw ?? '');
+    if (!Number.isInteger(itemId) || itemId < 0 || itemId > 32767) {
+      throw new Error(
+        `${itemName}: Item ID ${String(itemIdRaw)} không nằm trong short dương 0..32767.`
+      );
+    }
+
+    for (const option of options) {
+      if (option.enabled === false) continue;
+      let optionId = Math.round(Number(option.optionId));
+      let param = Math.round(Number(option.param));
+      if (!Number.isInteger(optionId) || optionId < 0 || optionId > 32767) {
+        throw new Error(
+          `${itemName}: optionId ${option.optionId} không hợp lệ.`
+        );
+      }
+
+      // a.H(int,int) converts the two compact K-options before storing them:
+      // #22 HP+#K -> #6 with param*1000, #23 KI+#K -> #7 with param*1000.
+      // Normalize here too so an override updates the existing runtime option
+      // instead of creating a duplicate alias that combat code may ignore.
+      if (optionId === 22 || optionId === 23) {
+        optionId = optionId === 22 ? 6 : 7;
+        param *= 1000;
+      }
+
+      if (!Number.isInteger(param) || param < JAVA_INT_MIN || param > JAVA_INT_MAX) {
+        throw new Error(
+          `${itemName}: param option #${option.optionId} vượt Java int32 sau normalize.`
+        );
+      }
+      byKey.set(`${itemId}:${optionId}`, { itemId, optionId, param });
+    }
+  };
+
+  for (const draft of drafts) {
+    addRules(
+      draft.values[0],
+      draft.values[3] || draft.key || 'Item',
+      draft.optionOverrides
+    );
+  }
+
+  // NEW_ITEM là operation của Patch Workspace, không tồn tại trong itemDrafts.
+  // Nếu bỏ nhánh này, item mới có thể được tạo ra nhưng toàn bộ HP/KI/damage/crit
+  // nhập trong modal sẽ không bao giờ đi vào PanelItemOptionRuntime.
+  for (const operation of newItems) {
+    addRules(
+      operation.values[0],
+      operation.values[3] || `Item mới #${operation.values[0] || '?'}`,
+      operation.optionOverrides
+    );
+  }
+
+  const rules = [...byKey.values()].sort(
+    (a, b) => a.itemId - b.itemId || a.optionId - b.optionId
+  );
+  if (rules.length > 256) {
+    throw new Error(`ItemOption runtime có ${rules.length} rule, vượt giới hạn an toàn 256 rule/JAR.`);
+  }
+  return rules;
+}
+
+interface HelperMethodSpec {
+  accessFlags: number;
+  nameIndex: number;
+  descriptorIndex: number;
+  maxStack: number;
+  maxLocals: number;
+  code: number[];
+}
+
+function encodeSimpleHelperMethod(codeName: number, spec: HelperMethodSpec): Uint8Array {
+  const codeBytes = new Uint8Array(spec.code);
+  const codeDataLength = 2 + 2 + 4 + codeBytes.length + 2 + 2;
+  const codeAttribute = new Uint8Array(6 + codeDataLength);
+  const codeView = new DataView(codeAttribute.buffer);
+  writeU2(codeView, 0, codeName);
+  writeU4(codeView, 2, codeDataLength);
+  let cursor = 6;
+  writeU2(codeView, cursor, spec.maxStack); cursor += 2;
+  writeU2(codeView, cursor, spec.maxLocals); cursor += 2;
+  writeU4(codeView, cursor, codeBytes.length); cursor += 4;
+  codeAttribute.set(codeBytes, cursor); cursor += codeBytes.length;
+  writeU2(codeView, cursor, 0); cursor += 2; // exception table
+  writeU2(codeView, cursor, 0); // nested attributes; target is classfile v47
+
+  const method = new Uint8Array(8 + codeAttribute.length);
+  const methodView = new DataView(method.buffer);
+  writeU2(methodView, 0, spec.accessFlags);
+  writeU2(methodView, 2, spec.nameIndex);
+  writeU2(methodView, 4, spec.descriptorIndex);
+  writeU2(methodView, 6, 1);
+  method.set(codeAttribute, 8);
+  return method;
+}
+
+function aLoad(index: number): number[] {
+  if (index >= 0 && index <= 3) return [0x2a + index];
+  return [0x19, index & 0xff];
+}
+function aStore(index: number): number[] {
+  if (index >= 0 && index <= 3) return [0x4b + index];
+  return [0x3a, index & 0xff];
+}
+function iLoad(index: number): number[] {
+  if (index >= 0 && index <= 3) return [0x1a + index];
+  return [0x15, index & 0xff];
+}
+function iStore(index: number): number[] {
+  if (index >= 0 && index <= 3) return [0x3b + index];
+  return [0x36, index & 0xff];
+}
+
+/**
+ * Build a runtime stat writer that updates live a.ab item instances.
+ * Existing options are edited in place; missing options are appended, never
+ * replacing the whole option array. This preserves all unspecified stats.
+ */
+function buildItemOptionRuntimeHelper(
+  targetClass: ClassFileInfo,
+  rules: ItemOptionRuntimeRule[]
+): ArrayBuffer {
+  const cp = new HelperConstantPool();
+  const thisClass = cp.clazz(ITEM_OPTION_HELPER_INTERNAL_NAME);
+  const superClass = cp.clazz('java/lang/Object');
+  const codeName = cp.utf8('Code');
+
+  const tickName = cp.utf8('tick');
+  const tickDesc = cp.utf8('()J');
+  const sleepAndTickName = cp.utf8('sleepAndTick');
+  const sleepAndTickDesc = cp.utf8('(J)V');
+  const applyArrayName = cp.utf8('applyArray');
+  const applyArrayDesc = cp.utf8('([La/ab;)V');
+  const apply2DName = cp.utf8('apply2D');
+  const apply2DDesc = cp.utf8('([[La/ab;)V');
+  const applyItemName = cp.utf8('applyItem');
+  const applyItemDesc = cp.utf8('(La/ab;)V');
+  const setOptionName = cp.utf8('setOption');
+  const setOptionDesc = cp.utf8('(La/ab;II)V');
+  const cleanAndApplyName = cp.utf8('cleanAndApply');
+  const cleanAndApplyDesc = cp.utf8('(La/a/w;)Z');
+  const applyServerItemName = cp.utf8('applyServerItem');
+  const applyServerItemDesc = cp.utf8('(La/a/w;)V');
+  const setServerOptionName = cp.utf8('setServerOption');
+  const setServerOptionDesc = cp.utf8('(La/a/w;II)V');
+
+  const playerGetter = cp.methodRef('a/c', 'a', '()La/c;');
+  const playerItemsA = cp.fieldRef('a/c', 'a', '[La/ab;');
+  const playerItemsB = cp.fieldRef('a/c', 'b', '[La/ab;');
+  const playerItemsC = cp.fieldRef('a/c', 'c', '[La/ab;');
+  const playerItems2D = cp.fieldRef('a/c', 'a', '[[La/ab;');
+  const itemTemplateRef = cp.fieldRef('a/ab', 'a', 'La/bK;');
+  const itemOptionsRef = cp.fieldRef('a/ab', 'b', '[La/H;');
+  const templateIdRef = cp.fieldRef('a/bK', 'aj', 'S');
+  const optionTemplateRef = cp.fieldRef('a/H', 'a', 'La/bU;');
+  const optionParamRef = cp.fieldRef('a/H', 'fq', 'I');
+  const optionIdRef = cp.fieldRef('a/bU', 'ui', 'I');
+  const optionClass = cp.clazz('a/H');
+  const optionCtor = cp.methodRef('a/H', '<init>', '(II)V');
+  const optionManagerGetter = cp.methodRef('a/am', 'a', '()La/am;');
+  const optionTemplatesRef = cp.fieldRef('a/am', 'a', '[La/bU;');
+  const currentTimeMillis = cp.methodRef('java/lang/System', 'currentTimeMillis', '()J');
+  const threadSleep = cp.methodRef('java/lang/Thread', 'sleep', '(J)V');
+  const arrayCopy = cp.methodRef(
+    'java/lang/System',
+    'arraycopy',
+    '(Ljava/lang/Object;ILjava/lang/Object;II)V'
+  );
+
+  // Gameplay-side item representation. a/a/l.a(H, statKind) walks H.b and
+  // reads a/a/w.cE/cF. Option #50 is explicitly included in attack-percent math.
+  const dbFixCleanCall = cp.methodRef('patch/DBFix', 'cleanIfDragon', '(La/a/w;)Z');
+  const serverItemIdRef = cp.fieldRef('a/a/w', 'cG', 'I');
+  const serverOptionIdsRef = cp.fieldRef('a/a/w', 'cE', '[I');
+  const serverOptionParamsRef = cp.fieldRef('a/a/w', 'cF', '[I');
+  const serverOptionCountRef = cp.fieldRef('a/a/w', 'xk', 'I');
+  const serverAppendOptionCall = cp.methodRef('a/a/w', 'v', '(II)V');
+
+  const applyArrayCall = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'applyArray', '([La/ab;)V');
+  const apply2DCall = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'apply2D', '([[La/ab;)V');
+  const applyItemCall = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'applyItem', '(La/ab;)V');
+  const setOptionCall = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'setOption', '(La/ab;II)V');
+  const applyServerItemCall = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'applyServerItem', '(La/a/w;)V');
+  const setServerOptionCall = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'setServerOption', '(La/a/w;II)V');
+  const tickCall = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'tick', '()J');
+
+  // tick(): client/display side only. Actual combat stat application is hooked
+  // directly in a/a/w.fU() via cleanAndApply(), below.
+  // the exact original System.currentTimeMillis() return contract used by bN.run().
+  const tick: number[] = [
+    0xb8, (playerGetter >> 8) & 0xff, playerGetter & 0xff,
+    ...aStore(0),
+    ...aLoad(0),
+  ];
+  const tickNull = tick.length;
+  tick.push(0xc6, 0, 0); // ifnull -> time
+  const appendArrayCall = (fieldRef: number) => {
+    tick.push(
+      ...aLoad(0),
+      0xb4, (fieldRef >> 8) & 0xff, fieldRef & 0xff,
+      0xb8, (applyArrayCall >> 8) & 0xff, applyArrayCall & 0xff
+    );
+  };
+  appendArrayCall(playerItemsA);
+  appendArrayCall(playerItemsB);
+  appendArrayCall(playerItemsC);
+  tick.push(
+    ...aLoad(0),
+    0xb4, (playerItems2D >> 8) & 0xff, playerItems2D & 0xff,
+    0xb8, (apply2DCall >> 8) & 0xff, apply2DCall & 0xff
+  );
+  const tickTime = tick.length;
+  patchBranch(tick, tickNull, tickTime);
+  tick.push(
+    0xb8, (currentTimeMillis >> 8) & 0xff, currentTimeMillis & 0xff,
+    0xad // lreturn
+  );
+
+  // sleepAndTick(long ms): fallback hook for game builds whose render loop no
+  // longer calls System.currentTimeMillis() directly. Preserve Thread.sleep(J)V
+  // semantics, then execute the exact same ItemOption tick and discard its time.
+  // Because the caller originally invokes Thread.sleep with the same descriptor,
+  // retargeting that call does not change caller code length or stack shape.
+  const sleepAndTick: number[] = [
+    0x1e, // lload_0
+    0xb8, (threadSleep >> 8) & 0xff, threadSleep & 0xff,
+    0xb8, (tickCall >> 8) & 0xff, tickCall & 0xff,
+    0x58, // pop2 (discard long returned by tick)
+    0xb1, // return
+  ];
+
+  // applyArray(a.ab[]): null-safe array walk.
+  const applyArray: number[] = [...aLoad(0)];
+  const arrayNull = applyArray.length;
+  applyArray.push(0xc6, 0, 0);
+  applyArray.push(0x03, ...iStore(1)); // int i = 0
+  const arrayLoop = applyArray.length;
+  applyArray.push(...iLoad(1), ...aLoad(0), 0xbe); // i, arr.length
+  const arrayDone = applyArray.length;
+  applyArray.push(0xa2, 0, 0); // if_icmpge end
+  applyArray.push(
+    ...aLoad(0), ...iLoad(1), 0x32, // aaload
+    0xb8, (applyItemCall >> 8) & 0xff, applyItemCall & 0xff,
+    0x84, 0x01, 0x01 // iinc 1,1
+  );
+  const arrayBack = applyArray.length;
+  applyArray.push(0xa7, 0, 0);
+  const arrayEnd = applyArray.length;
+  applyArray.push(0xb1);
+  patchBranch(applyArray, arrayNull, arrayEnd);
+  patchBranch(applyArray, arrayDone, arrayEnd);
+  patchBranch(applyArray, arrayBack, arrayLoop);
+
+  // apply2D(a.ab[][]): walk each inventory/equipment row.
+  const apply2D: number[] = [...aLoad(0)];
+  const twoDNull = apply2D.length;
+  apply2D.push(0xc6, 0, 0);
+  apply2D.push(0x03, ...iStore(1));
+  const twoDLoop = apply2D.length;
+  apply2D.push(...iLoad(1), ...aLoad(0), 0xbe);
+  const twoDDone = apply2D.length;
+  apply2D.push(0xa2, 0, 0);
+  apply2D.push(
+    ...aLoad(0), ...iLoad(1), 0x32,
+    0xb8, (applyArrayCall >> 8) & 0xff, applyArrayCall & 0xff,
+    0x84, 0x01, 0x01
+  );
+  const twoDBack = apply2D.length;
+  apply2D.push(0xa7, 0, 0);
+  const twoDEnd = apply2D.length;
+  apply2D.push(0xb1);
+  patchBranch(apply2D, twoDNull, twoDEnd);
+  patchBranch(apply2D, twoDDone, twoDEnd);
+  patchBranch(apply2D, twoDBack, twoDLoop);
+
+  // Group options by item ID so each item does only one ID comparison chain.
+  const grouped = new Map<number, ItemOptionRuntimeRule[]>();
+  for (const rule of rules) {
+    const list = grouped.get(rule.itemId) ?? [];
+    list.push(rule);
+    grouped.set(rule.itemId, list);
+  }
+
+  const applyItem: number[] = [...aLoad(0)];
+  const itemNull = applyItem.length;
+  applyItem.push(0xc6, 0, 0);
+  applyItem.push(...aLoad(0), 0xb4, (itemTemplateRef >> 8) & 0xff, itemTemplateRef & 0xff);
+  const templateNull = applyItem.length;
+  applyItem.push(0xc6, 0, 0);
+  const itemGotoEnd: number[] = [];
+
+  for (const [itemId, itemRules] of [...grouped.entries()].sort((a, b) => a[0] - b[0])) {
+    applyItem.push(
+      ...aLoad(0),
+      0xb4, (itemTemplateRef >> 8) & 0xff, itemTemplateRef & 0xff,
+      0xb4, (templateIdRef >> 8) & 0xff, templateIdRef & 0xff,
+      ...helperIntPush(cp, itemId)
+    );
+    const mismatch = applyItem.length;
+    applyItem.push(0xa0, 0, 0); // if_icmpne next item
+
+    for (const rule of itemRules) {
+      applyItem.push(
+        ...aLoad(0),
+        ...helperIntPush(cp, rule.optionId),
+        ...helperIntPush(cp, rule.param),
+        0xb8, (setOptionCall >> 8) & 0xff, setOptionCall & 0xff
+      );
+    }
+    const jumpEnd = applyItem.length;
+    applyItem.push(0xa7, 0, 0);
+    itemGotoEnd.push(jumpEnd);
+    const nextItem = applyItem.length;
+    patchBranch(applyItem, mismatch, nextItem);
+  }
+  const itemEnd = applyItem.length;
+  applyItem.push(0xb1);
+  patchBranch(applyItem, itemNull, itemEnd);
+  patchBranch(applyItem, templateNull, itemEnd);
+  for (const pos of itemGotoEnd) patchBranch(applyItem, pos, itemEnd);
+
+  // setOption(item, optionId, param): update an existing a.H or append one.
+  // Locals: 0 item, 1 optionId, 2 param, 3 old[], 4 i, 5 current, 6 len, 7 next[].
+  const setOption: number[] = [...aLoad(0)];
+  const setItemNull = setOption.length;
+  setOption.push(0xc6, 0, 0);
+  setOption.push(
+    ...aLoad(0),
+    0xb4, (itemOptionsRef >> 8) & 0xff, itemOptionsRef & 0xff,
+    ...aStore(3),
+    ...aLoad(3)
+  );
+  const oldNullToAppend = setOption.length;
+  setOption.push(0xc6, 0, 0);
+  setOption.push(0x03, ...iStore(4));
+  const optionLoop = setOption.length;
+  setOption.push(...iLoad(4), ...aLoad(3), 0xbe);
+  const exhausted = setOption.length;
+  setOption.push(0xa2, 0, 0);
+  setOption.push(...aLoad(3), ...iLoad(4), 0x32, ...aStore(5), ...aLoad(5));
+  const currentNull = setOption.length;
+  setOption.push(0xc6, 0, 0);
+  setOption.push(
+    ...aLoad(5),
+    0xb4, (optionTemplateRef >> 8) & 0xff, optionTemplateRef & 0xff
+  );
+  const currentTemplateNull = setOption.length;
+  setOption.push(0xc6, 0, 0);
+  setOption.push(
+    ...aLoad(5),
+    0xb4, (optionTemplateRef >> 8) & 0xff, optionTemplateRef & 0xff,
+    0xb4, (optionIdRef >> 8) & 0xff, optionIdRef & 0xff,
+    ...iLoad(1)
+  );
+  const notSameOption = setOption.length;
+  setOption.push(0xa0, 0, 0);
+  setOption.push(
+    ...aLoad(5), ...iLoad(2),
+    0xb5, (optionParamRef >> 8) & 0xff, optionParamRef & 0xff,
+    0xb1
+  );
+  const optionNext = setOption.length;
+  setOption.push(0x84, 0x04, 0x01);
+  const optionBack = setOption.length;
+  setOption.push(0xa7, 0, 0);
+  const appendStart = setOption.length;
+  patchBranch(setOption, oldNullToAppend, appendStart);
+  patchBranch(setOption, exhausted, appendStart);
+  patchBranch(setOption, currentNull, optionNext);
+  patchBranch(setOption, currentTemplateNull, optionNext);
+  patchBranch(setOption, notSameOption, optionNext);
+  patchBranch(setOption, optionBack, optionLoop);
+
+  // Appending a missing option eventually calls a.H(int,int), which indexes
+  // a/am.a:[La/bU;. During very early startup that table can still be null.
+  // Guard it here; tick() runs again next frame after game data finishes loading.
+  setOption.push(
+    0xb8, (optionManagerGetter >> 8) & 0xff, optionManagerGetter & 0xff,
+    0xb4, (optionTemplatesRef >> 8) & 0xff, optionTemplatesRef & 0xff,
+    ...aStore(8),
+    ...aLoad(8)
+  );
+  const templatesNull = setOption.length;
+  setOption.push(0xc6, 0, 0);
+  setOption.push(...iLoad(1), ...aLoad(8), 0xbe);
+  const optionOutOfRange = setOption.length;
+  setOption.push(0xa2, 0, 0); // optionId >= templates.length -> return
+
+  // len = old == null ? 0 : old.length
+  setOption.push(...aLoad(3));
+  const oldNullLen = setOption.length;
+  setOption.push(0xc6, 0, 0);
+  setOption.push(...aLoad(3), 0xbe, ...iStore(6));
+  const lenGotoAlloc = setOption.length;
+  setOption.push(0xa7, 0, 0);
+  const lenZero = setOption.length;
+  setOption.push(0x03, ...iStore(6));
+  const alloc = setOption.length;
+  patchBranch(setOption, oldNullLen, lenZero);
+  patchBranch(setOption, lenGotoAlloc, alloc);
+
+  setOption.push(
+    ...iLoad(6), 0x04, 0x60, // len + 1
+    0xbd, (optionClass >> 8) & 0xff, optionClass & 0xff,
+    ...aStore(7),
+    ...iLoad(6)
+  );
+  const noCopy = setOption.length;
+  setOption.push(0x9e, 0, 0); // ifle
+  setOption.push(
+    ...aLoad(3), 0x03,
+    ...aLoad(7), 0x03,
+    ...iLoad(6),
+    0xb8, (arrayCopy >> 8) & 0xff, arrayCopy & 0xff
+  );
+  const afterCopy = setOption.length;
+  patchBranch(setOption, noCopy, afterCopy);
+
+  setOption.push(
+    ...aLoad(7), ...iLoad(6),
+    0xbb, (optionClass >> 8) & 0xff, optionClass & 0xff,
+    0x59,
+    ...iLoad(1), ...iLoad(2),
+    0xb7, (optionCtor >> 8) & 0xff, optionCtor & 0xff,
+    0x53, // aastore
+    ...aLoad(0), ...aLoad(7),
+    0xb5, (itemOptionsRef >> 8) & 0xff, itemOptionsRef & 0xff
+  );
+  const setEnd = setOption.length;
+  setOption.push(0xb1);
+  patchBranch(setOption, setItemNull, setEnd);
+  patchBranch(setOption, templatesNull, setEnd);
+  patchBranch(setOption, optionOutOfRange, setEnd);
+
+
+  // cleanAndApply(a/a/w): exact-descriptor replacement for the first call in
+  // a/a/w.fU(). Preserve DBFix.cleanIfDragon(item) semantics, then apply our
+  // options before fU continues into its normal intrinsic-option normalization.
+  const cleanAndApply: number[] = [
+    ...aLoad(0),
+    0xb8, (dbFixCleanCall >> 8) & 0xff, dbFixCleanCall & 0xff,
+  ];
+  const notClean = cleanAndApply.length;
+  cleanAndApply.push(0x99, 0, 0); // ifeq -> apply rules
+  cleanAndApply.push(0x04, 0xac); // iconst_1; ireturn
+  const applyGameplayRules = cleanAndApply.length;
+  patchBranch(cleanAndApply, notClean, applyGameplayRules);
+  cleanAndApply.push(
+    ...aLoad(0),
+    0xb8, (applyServerItemCall >> 8) & 0xff, applyServerItemCall & 0xff,
+    0x03,
+    0xac
+  );
+
+  // applyServerItem(a/a/w): match gameplay item by template ID cG and write
+  // the configured options. This is what makes '+200% sức đánh' affect a/a/l.h().
+  const applyServerItem: number[] = [...aLoad(0)];
+  const serverItemNull = applyServerItem.length;
+  applyServerItem.push(0xc6, 0, 0);
+  const serverItemGotoEnd: number[] = [];
+  for (const [itemId, itemRules] of [...grouped.entries()].sort((a, b) => a[0] - b[0])) {
+    applyServerItem.push(
+      ...aLoad(0),
+      0xb4, (serverItemIdRef >> 8) & 0xff, serverItemIdRef & 0xff,
+      ...helperIntPush(cp, itemId)
+    );
+    const mismatch = applyServerItem.length;
+    applyServerItem.push(0xa0, 0, 0);
+    for (const rule of itemRules) {
+      applyServerItem.push(
+        ...aLoad(0),
+        ...helperIntPush(cp, rule.optionId),
+        ...helperIntPush(cp, rule.param),
+        0xb8, (setServerOptionCall >> 8) & 0xff, setServerOptionCall & 0xff
+      );
+    }
+    const jumpEnd = applyServerItem.length;
+    applyServerItem.push(0xa7, 0, 0);
+    serverItemGotoEnd.push(jumpEnd);
+    const nextItem = applyServerItem.length;
+    patchBranch(applyServerItem, mismatch, nextItem);
+  }
+  const serverItemEnd = applyServerItem.length;
+  applyServerItem.push(0xb1);
+  patchBranch(applyServerItem, serverItemNull, serverItemEnd);
+  for (const pos of serverItemGotoEnd) patchBranch(applyServerItem, pos, serverItemEnd);
+
+  // setServerOption(a/a/w, optionId, param): replace an existing option in cE/cF
+  // or append through the game's own v(II). Never call fU() here (recursion).
+  const setServerOption: number[] = [...aLoad(0)];
+  const serverSetNull = setServerOption.length;
+  setServerOption.push(0xc6, 0, 0);
+  setServerOption.push(0x03, ...iStore(3));
+  const serverSetLoop = setServerOption.length;
+  setServerOption.push(
+    ...iLoad(3),
+    ...aLoad(0),
+    0xb4, (serverOptionCountRef >> 8) & 0xff, serverOptionCountRef & 0xff
+  );
+  const serverSetAppend = setServerOption.length;
+  setServerOption.push(0xa2, 0, 0);
+  setServerOption.push(
+    ...aLoad(0),
+    0xb4, (serverOptionIdsRef >> 8) & 0xff, serverOptionIdsRef & 0xff,
+    ...iLoad(3),
+    0x2e,
+    ...iLoad(1)
+  );
+  const serverSetNext = setServerOption.length;
+  setServerOption.push(0xa0, 0, 0);
+  setServerOption.push(
+    ...aLoad(0),
+    0xb4, (serverOptionParamsRef >> 8) & 0xff, serverOptionParamsRef & 0xff,
+    ...iLoad(3),
+    ...iLoad(2),
+    0x4f,
+    0xb1
+  );
+  const serverSetInc = setServerOption.length;
+  setServerOption.push(0x84, 0x03, 0x01);
+  const serverSetBack = setServerOption.length;
+  setServerOption.push(0xa7, 0, 0);
+  const serverAppendStart = setServerOption.length;
+  patchBranch(setServerOption, serverSetAppend, serverAppendStart);
+  patchBranch(setServerOption, serverSetNext, serverSetInc);
+  patchBranch(setServerOption, serverSetBack, serverSetLoop);
+  setServerOption.push(
+    ...aLoad(0),
+    ...iLoad(1),
+    ...iLoad(2),
+    0xb6, (serverAppendOptionCall >> 8) & 0xff, serverAppendOptionCall & 0xff
+  );
+  const serverSetEnd = setServerOption.length;
+  setServerOption.push(0xb1);
+  patchBranch(setServerOption, serverSetNull, serverSetEnd);
+
+  for (const [name, code] of [
+    ['tick', tick],
+    ['sleepAndTick', sleepAndTick],
+    ['applyArray', applyArray],
+    ['apply2D', apply2D],
+    ['applyItem', applyItem],
+    ['setOption', setOption],
+    ['cleanAndApply', cleanAndApply],
+    ['applyServerItem', applyServerItem],
+    ['setServerOption', setServerOption],
+  ] as Array<[string, number[]]>) {
+    if (code.length > 65535) {
+      throw new Error(`PanelItemOptionRuntime.${name} dài ${code.length} byte, vượt JVM code_length.`);
+    }
+  }
+
+  // Serialize CP after all helperIntPush() calls have registered large integers.
+  const methodSpecs: HelperMethodSpec[] = [
+    { accessFlags: 0x0009, nameIndex: tickName, descriptorIndex: tickDesc, maxStack: 2, maxLocals: 1, code: tick },
+    { accessFlags: 0x0009, nameIndex: sleepAndTickName, descriptorIndex: sleepAndTickDesc, maxStack: 2, maxLocals: 2, code: sleepAndTick },
+    { accessFlags: 0x000a, nameIndex: applyArrayName, descriptorIndex: applyArrayDesc, maxStack: 2, maxLocals: 2, code: applyArray },
+    { accessFlags: 0x000a, nameIndex: apply2DName, descriptorIndex: apply2DDesc, maxStack: 2, maxLocals: 2, code: apply2D },
+    { accessFlags: 0x000a, nameIndex: applyItemName, descriptorIndex: applyItemDesc, maxStack: 3, maxLocals: 1, code: applyItem },
+    { accessFlags: 0x000a, nameIndex: setOptionName, descriptorIndex: setOptionDesc, maxStack: 6, maxLocals: 9, code: setOption },
+    { accessFlags: 0x0009, nameIndex: cleanAndApplyName, descriptorIndex: cleanAndApplyDesc, maxStack: 1, maxLocals: 1, code: cleanAndApply },
+    { accessFlags: 0x000a, nameIndex: applyServerItemName, descriptorIndex: applyServerItemDesc, maxStack: 3, maxLocals: 1, code: applyServerItem },
+    { accessFlags: 0x000a, nameIndex: setServerOptionName, descriptorIndex: setServerOptionDesc, maxStack: 3, maxLocals: 4, code: setServerOption },
+  ];
+  const methods = methodSpecs.map((spec) => encodeSimpleHelperMethod(codeName, spec));
+  const cpBytes = cp.serialize();
+  const methodsLength = methods.reduce((sum, method) => sum + method.length, 0);
+  const total = 10 + cpBytes.length + 12 + methodsLength + 2;
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 0xcafebabe, false);
+  writeU2(view, 4, targetClass.minorVersion);
+  writeU2(view, 6, targetClass.majorVersion);
+  writeU2(view, 8, cp.count);
+  let cursor = 10;
+  out.set(cpBytes, cursor); cursor += cpBytes.length;
+  writeU2(view, cursor, 0x0031); cursor += 2; // public final super
+  writeU2(view, cursor, thisClass); cursor += 2;
+  writeU2(view, cursor, superClass); cursor += 2;
+  writeU2(view, cursor, 0); cursor += 2; // interfaces
+  writeU2(view, cursor, 0); cursor += 2; // fields
+  writeU2(view, cursor, methods.length); cursor += 2;
+  for (const method of methods) {
+    out.set(method, cursor);
+    cursor += method.length;
+  }
+  writeU2(view, cursor, 0); // class attrs
+
+  const buffer = toArrayBuffer(out);
+  const parsed = parseClassFile(buffer);
+  if (parsed.status !== 'valid' || parsed.remainingBytes !== 0) {
+    throw new Error('PanelItemOptionRuntime.class tự sinh không parse VALID.');
+  }
+  return buffer;
+}
+
+function appendItemOptionHelperMethodRef(
+  target: MutableClass,
+  name: string,
+  descriptor: string
+): number {
+  const helperUtf8 = appendCpEntry(target, rawUtf8(ITEM_OPTION_HELPER_INTERNAL_NAME));
+  const helperClass = appendCpEntry(target, rawU2Entry(TAG_CLASS, helperUtf8));
+  const nameUtf8 = appendCpEntry(target, rawUtf8(name));
+  const descUtf8 = appendCpEntry(target, rawUtf8(descriptor));
+  const nat = appendCpEntry(target, rawU2U2Entry(TAG_NAME_AND_TYPE, nameUtf8, descUtf8));
+  return appendCpEntry(target, rawU2U2Entry(TAG_METHODREF, helperClass, nat));
+}
+
+function appendItemOptionBridgeMethodRef(
+  target: MutableClass,
+  name: string,
+  descriptor: string
+): number {
+  const helperUtf8 = appendCpEntry(target, rawUtf8(ITEM_OPTION_BRIDGE_INTERNAL_NAME));
+  const helperClass = appendCpEntry(target, rawU2Entry(TAG_CLASS, helperUtf8));
+  const nameUtf8 = appendCpEntry(target, rawUtf8(name));
+  const descUtf8 = appendCpEntry(target, rawUtf8(descriptor));
+  const nat = appendCpEntry(target, rawU2U2Entry(TAG_NAME_AND_TYPE, nameUtf8, descUtf8));
+  return appendCpEntry(target, rawU2U2Entry(TAG_METHODREF, helperClass, nat));
+}
+
+/**
+ * Same-package bridge used when a/bN.run() has no direct time/sleep call.
+ * Retargeting invokevirtual a/bN.cu()V to this invokestatic keeps the caller
+ * code length and stack effect unchanged while preserving the original cu().
+ */
+function buildItemOptionLoopBridge(targetClass: ClassFileInfo): ArrayBuffer {
+  const cp = new HelperConstantPool();
+  const thisClass = cp.clazz(ITEM_OPTION_BRIDGE_INTERNAL_NAME);
+  const superClass = cp.clazz('java/lang/Object');
+  const codeName = cp.utf8('Code');
+  const nameIndex = cp.utf8('cuAndTick');
+  const descIndex = cp.utf8('(La/bN;)V');
+  const cuRef = cp.methodRef('a/bN', 'cu', '()V');
+  const tickRef = cp.methodRef(ITEM_OPTION_HELPER_INTERNAL_NAME, 'tick', '()J');
+  const code: number[] = [
+    ...aLoad(0),
+    0xb6, (cuRef >> 8) & 0xff, cuRef & 0xff,
+    0xb8, (tickRef >> 8) & 0xff, tickRef & 0xff,
+    0x58,
+    0xb1,
+  ];
+  const method = encodeSimpleHelperMethod(codeName, {
+    accessFlags: 0x0009,
+    nameIndex,
+    descriptorIndex: descIndex,
+    maxStack: 2,
+    maxLocals: 1,
+    code,
+  });
+  const cpBytes = cp.serialize();
+  const total = 10 + cpBytes.length + 12 + method.length + 2;
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 0xcafebabe, false);
+  writeU2(view, 4, targetClass.minorVersion);
+  writeU2(view, 6, targetClass.majorVersion);
+  writeU2(view, 8, cp.count);
+  let cursor = 10;
+  out.set(cpBytes, cursor); cursor += cpBytes.length;
+  writeU2(view, cursor, 0x0031); cursor += 2;
+  writeU2(view, cursor, thisClass); cursor += 2;
+  writeU2(view, cursor, superClass); cursor += 2;
+  writeU2(view, cursor, 0); cursor += 2;
+  writeU2(view, cursor, 0); cursor += 2;
+  writeU2(view, cursor, 1); cursor += 2;
+  out.set(method, cursor); cursor += method.length;
+  writeU2(view, cursor, 0);
+
+  const buffer = toArrayBuffer(out);
+  const parsed = parseClassFile(buffer);
+  if (parsed.status !== 'valid' || parsed.remainingBytes !== 0) {
+    throw new Error('PanelItemOptionBridge.class tự sinh không parse VALID.');
+  }
+  return buffer;
+}
+
+interface RawInvokeRef {
+  owner: string;
+  name: string;
+  descriptor: string;
+}
+
+/**
+ * Resolve an invoke target directly from raw constant-pool bytes.
+ * Some obfuscated CLDC builds decode the invoke instruction but do not attach
+ * JvmInstruction.methodRef metadata. The writer must not treat that as "no hook".
+ */
+function resolveRawInvokeRef(
+  target: MutableClass,
+  absoluteOpcodeOffset: number
+): RawInvokeRef | null {
+  const opcode = target.bytes[absoluteOpcodeOffset];
+  if (opcode !== 0xb6 && opcode !== 0xb7 && opcode !== 0xb8 && opcode !== 0xb9) {
+    return null;
+  }
+  if (absoluteOpcodeOffset + 2 >= target.bytes.length) return null;
+
+  const cpIndex =
+    (target.bytes[absoluteOpcodeOffset + 1] << 8) |
+    target.bytes[absoluteOpcodeOffset + 2];
+  const methodEntry = target.layout.constantPool[cpIndex];
+  if (!methodEntry ||
+      (methodEntry.tag !== TAG_METHODREF && methodEntry.tag !== TAG_INTERFACE_METHODREF)) {
+    return null;
+  }
+
+  const view = new DataView(
+    target.bytes.buffer,
+    target.bytes.byteOffset,
+    target.bytes.byteLength
+  );
+  const classIndex = readU2(view, methodEntry.payloadOffset);
+  const ntIndex = readU2(view, methodEntry.payloadOffset + 2);
+  const classEntry = target.layout.constantPool[classIndex];
+  const ntEntry = target.layout.constantPool[ntIndex];
+  if (!classEntry || classEntry.tag !== TAG_CLASS ||
+      !ntEntry || ntEntry.tag !== TAG_NAME_AND_TYPE) {
+    return null;
+  }
+
+  const ownerNameIndex = readU2(view, classEntry.payloadOffset);
+  const nameIndex = readU2(view, ntEntry.payloadOffset);
+  const descriptorIndex = readU2(view, ntEntry.payloadOffset + 2);
+  const owner = target.layout.utf8.get(ownerNameIndex) ?? '';
+  const name = target.layout.utf8.get(nameIndex) ?? '';
+  const descriptor = target.layout.utf8.get(descriptorIndex) ?? '';
+  if (!owner || !name || !descriptor) return null;
+  return { owner, name, descriptor };
+}
+
+function findRawInvokeOffsets(
+  target: MutableClass,
+  methodLayout: MethodLayout,
+  matcher: (ref: RawInvokeRef, opcode: number) => boolean
+): number[] {
+  const offsets: number[] = [];
+  const last = Math.max(0, methodLayout.codeLength - 3);
+
+  // Deliberately scan the raw Code byte range instead of trusting
+  // JvmInstruction.methodRef / decoded instruction offsets. Some obfuscated
+  // CLDC classes expose valid invoke bytecode but the higher-level decoder can
+  // attach stale/missing MethodRef metadata. Requiring the 16-bit operand to
+  // resolve to an exact CONSTANT_Methodref makes accidental operand-byte
+  // matches extremely unlikely.
+  for (let offset = 0; offset <= last; offset++) {
+    const absolute = methodLayout.codeStart + offset;
+    const opcode = target.bytes[absolute];
+    if (opcode !== 0xb6 && opcode !== 0xb7 && opcode !== 0xb8 && opcode !== 0xb9) {
+      continue;
+    }
+    const ref = resolveRawInvokeRef(target, absolute);
+    if (ref && matcher(ref, opcode)) offsets.push(offset);
+  }
+  return offsets;
+}
+
+function rawInvokeMatchesAt(
+  target: MutableClass,
+  methodLayout: MethodLayout,
+  offset: number,
+  owner: string,
+  name: string,
+  descriptor: string,
+  opcode?: number
+): boolean {
+  const absolute = methodLayout.codeStart + offset;
+  if (absolute < methodLayout.codeStart || absolute + 2 >= methodLayout.codeEnd) return false;
+  if (opcode !== undefined && target.bytes[absolute] !== opcode) return false;
+  const ref = resolveRawInvokeRef(target, absolute);
+  return Boolean(
+    ref &&
+      ref.owner === owner &&
+      ref.name === name &&
+      ref.descriptor === descriptor
+  );
+}
+
+
+
+/**
+ * Hook the actual gameplay stat item path. a/a/l.a(H, statKind) calls fU() on
+ * each equipped a/a/w before reading cE/cF. Retarget the existing
+ * DBFix.cleanIfDragon(a/a/w)Z call at the start of fU() to our same-descriptor
+ * cleanAndApply(a/a/w)Z wrapper. No instruction resize and no stack change.
+ */
+function patchItemOptionServerStatHook(buffer: ArrayBuffer): ArrayBuffer {
+  const initialParsed = parseClassFile(buffer);
+  if (initialParsed.status !== 'valid' || initialParsed.remainingBytes !== 0) {
+    throw new Error('a/a/w.class không parse VALID trước ItemOption gameplay writer.');
+  }
+
+  const target: MutableClass = {
+    path: 'a/a/w.class',
+    bytes: new Uint8Array(buffer.slice(0)),
+    layout: parseRawClassLayout(buffer),
+    classInfo: initialParsed,
+  };
+  const helperRef = appendItemOptionHelperMethodRef(target, 'cleanAndApply', '(La/a/w;)Z');
+  refreshMutable(target);
+
+  const fULayout = target.layout.methods.find(
+    (method) => method.name === 'fU' && method.descriptor === '()V'
+  );
+  if (!fULayout) {
+    throw new Error('Không tìm thấy a/a/w.fU()V để gắn gameplay ItemOption writer.');
+  }
+
+  const existing = findRawInvokeOffsets(
+    target,
+    fULayout,
+    (ref, opcode) =>
+      opcode === 0xb8 &&
+      ref.owner === ITEM_OPTION_HELPER_INTERNAL_NAME &&
+      ref.name === 'cleanAndApply' &&
+      ref.descriptor === '(La/a/w;)Z'
+  );
+
+  let hookOffset: number;
+  if (existing.length > 0) {
+    hookOffset = existing[0];
+  } else {
+    const original = findRawInvokeOffsets(
+      target,
+      fULayout,
+      (ref, opcode) =>
+        opcode === 0xb8 &&
+        ref.owner === 'patch/DBFix' &&
+        ref.name === 'cleanIfDragon' &&
+        ref.descriptor === '(La/a/w;)Z'
+    );
+    if (original.length === 0) {
+      throw new Error('Không tìm thấy DBFix.cleanIfDragon(La/a/w;)Z trong a/a/w.fU().');
+    }
+    hookOffset = original[0];
+    const absolute = fULayout.codeStart + hookOffset;
+    target.bytes[absolute + 1] = (helperRef >> 8) & 0xff;
+    target.bytes[absolute + 2] = helperRef & 0xff;
+  }
+
+  refreshMutable(target);
+  const verifyLayout = target.layout.methods.find(
+    (method) => method.name === 'fU' && method.descriptor === '()V'
+  );
+  if (
+    !verifyLayout ||
+    !rawInvokeMatchesAt(
+      target,
+      verifyLayout,
+      hookOffset,
+      ITEM_OPTION_HELPER_INTERNAL_NAME,
+      'cleanAndApply',
+      '(La/a/w;)Z',
+      0xb8
+    )
+  ) {
+    throw new Error('Không verify được ItemOption gameplay hook trong a/a/w.fU().');
+  }
+
+  const classBytes = toArrayBuffer(target.bytes);
+  const finalParsed = parseClassFile(classBytes);
+  if (finalParsed.status !== 'valid' || finalParsed.remainingBytes !== 0) {
+    throw new Error('a/a/w.class không parse VALID sau ItemOption gameplay hook.');
+  }
+  return classBytes;
+}
+
+/**
+ * Hook the render/game loop without resizing its bytecode.
+ * Preferred path: currentTimeMillis()J -> tick()J (same descriptor).
+ * Fallback path: every Thread.sleep(J)V -> sleepAndTick(J)V (same descriptor).
+ * The fallback supports newer JAR builds where a/bN.run() no longer references
+ * System.currentTimeMillis directly.
+ */
+function patchItemOptionTickHook(
+  buffer: ArrayBuffer,
+  rules: ItemOptionRuntimeRule[]
+): { classBytes: ArrayBuffer; helperBytes: ArrayBuffer; bridgeBytes: ArrayBuffer; ruleCount: number } {
+  const initialParsed = parseClassFile(buffer);
+  if (initialParsed.status !== 'valid' || initialParsed.remainingBytes !== 0) {
+    throw new Error('a/bN.class không parse VALID trước ItemOption writer.');
+  }
+
+  const target: MutableClass = {
+    path: 'a/bN.class',
+    bytes: new Uint8Array(buffer.slice(0)),
+    layout: parseRawClassLayout(buffer),
+    classInfo: initialParsed,
+  };
+  const tickRef = appendItemOptionHelperMethodRef(target, 'tick', '()J');
+  const sleepAndTickRef = appendItemOptionHelperMethodRef(target, 'sleepAndTick', '(J)V');
+  const cuAndTickRef = appendItemOptionBridgeMethodRef(target, 'cuAndTick', '(La/bN;)V');
+  refreshMutable(target);
+
+  const runInfo = target.classInfo.methods.find(
+    (method) => method.name === 'run' && method.descriptor === '()V'
+  );
+  const runLayout = target.layout.methods.find(
+    (method) => method.name === 'run' && method.descriptor === '()V'
+  );
+  if (!runInfo?.code?.instructions || !runLayout) {
+    throw new Error('Không tìm thấy a/bN.run()V hoặc bytecode instructions.');
+  }
+
+  let hookMode: 'TIME' | 'SLEEP' | 'CU';
+  let hookOffsets: number[];
+
+  // First detect an already-installed hook so rebuilding a workspace JAR is
+  // idempotent and does not add a second tick path.
+  const existingTimeHooks = findRawInvokeOffsets(
+    target,
+    runLayout,
+    (ref, opcode) =>
+      opcode === 0xb8 &&
+      ref.owner === ITEM_OPTION_HELPER_INTERNAL_NAME &&
+      ref.name === 'tick' &&
+      ref.descriptor === '()J'
+  );
+  const existingSleepHooks = findRawInvokeOffsets(
+    target,
+    runLayout,
+    (ref, opcode) =>
+      opcode === 0xb8 &&
+      ref.owner === ITEM_OPTION_HELPER_INTERNAL_NAME &&
+      ref.name === 'sleepAndTick' &&
+      ref.descriptor === '(J)V'
+  );
+  const existingCuHooks = findRawInvokeOffsets(
+    target,
+    runLayout,
+    (ref, opcode) =>
+      opcode === 0xb8 &&
+      ref.owner === ITEM_OPTION_BRIDGE_INTERNAL_NAME &&
+      ref.name === 'cuAndTick' &&
+      ref.descriptor === '(La/bN;)V'
+  );
+
+  if (existingTimeHooks.length > 0) {
+    hookMode = 'TIME';
+    hookOffsets = existingTimeHooks;
+  } else if (existingCuHooks.length > 0) {
+    hookMode = 'CU';
+    hookOffsets = existingCuHooks;
+  } else if (existingSleepHooks.length > 0) {
+    hookMode = 'SLEEP';
+    hookOffsets = existingSleepHooks;
+  } else {
+    // Do a true raw Code scan. Do not consult JvmInstruction.methodRef at all.
+    // NgocRongChay 1.9.6f has the exact calls below in a/bN.run(), but its
+    // higher-level decoder metadata can fail to expose them.
+    const timeCalls = findRawInvokeOffsets(
+      target,
+      runLayout,
+      (ref, opcode) =>
+        opcode === 0xb8 &&
+        ref.owner === 'java/lang/System' &&
+        ref.name === 'currentTimeMillis' &&
+        ref.descriptor === '()J'
+    );
+
+    if (timeCalls.length > 0) {
+      const offset = timeCalls[0];
+      const absolute = runLayout.codeStart + offset;
+      target.bytes[absolute + 1] = (tickRef >> 8) & 0xff;
+      target.bytes[absolute + 2] = tickRef & 0xff;
+      hookMode = 'TIME';
+      hookOffsets = [offset];
+    } else {
+      const cuCalls = findRawInvokeOffsets(
+        target,
+        runLayout,
+        (ref, opcode) =>
+          opcode === 0xb6 &&
+          ref.owner === 'a/bN' &&
+          ref.name === 'cu' &&
+          ref.descriptor === '()V'
+      );
+
+      if (cuCalls.length > 0) {
+        const offset = cuCalls[0];
+        const absolute = runLayout.codeStart + offset;
+        target.bytes[absolute] = 0xb8;
+        target.bytes[absolute + 1] = (cuAndTickRef >> 8) & 0xff;
+        target.bytes[absolute + 2] = cuAndTickRef & 0xff;
+        hookMode = 'CU';
+        hookOffsets = [offset];
+      } else {
+        const sleepCalls = findRawInvokeOffsets(
+          target,
+          runLayout,
+          (ref, opcode) =>
+            opcode === 0xb8 &&
+            ref.owner === 'java/lang/Thread' &&
+            ref.name === 'sleep' &&
+            ref.descriptor === '(J)V'
+        );
+
+        if (sleepCalls.length === 0) {
+          throw new Error(
+            'Không tìm thấy hook vòng lặp trong raw Code của a/bN.run() (time/cu/sleep).'
+          );
+        }
+
+        hookOffsets = [];
+        for (const offset of sleepCalls) {
+          const absolute = runLayout.codeStart + offset;
+          target.bytes[absolute + 1] = (sleepAndTickRef >> 8) & 0xff;
+          target.bytes[absolute + 2] = sleepAndTickRef & 0xff;
+          hookOffsets.push(offset);
+        }
+        hookMode = 'SLEEP';
+      }
+    }
+  }
+
+
+  refreshMutable(target);
+
+  const verifyRunLayout = target.layout.methods.find(
+    (method) => method.name === 'run' && method.descriptor === '()V'
+  );
+  if (!verifyRunLayout) {
+    throw new Error('Không tìm thấy a/bN.run()V khi verify ItemOption hook.');
+  }
+
+  let verifiedCount = 0;
+  for (const offset of hookOffsets) {
+    const ok =
+      hookMode === 'TIME'
+        ? rawInvokeMatchesAt(
+            target,
+            verifyRunLayout,
+            offset,
+            ITEM_OPTION_HELPER_INTERNAL_NAME,
+            'tick',
+            '()J',
+            0xb8
+          )
+        : hookMode === 'SLEEP'
+        ? rawInvokeMatchesAt(
+            target,
+            verifyRunLayout,
+            offset,
+            ITEM_OPTION_HELPER_INTERNAL_NAME,
+            'sleepAndTick',
+            '(J)V',
+            0xb8
+          )
+        : rawInvokeMatchesAt(
+            target,
+            verifyRunLayout,
+            offset,
+            ITEM_OPTION_BRIDGE_INTERNAL_NAME,
+            'cuAndTick',
+            '(La/bN;)V',
+            0xb8
+          );
+    if (ok) verifiedCount++;
+  }
+  if (verifiedCount !== hookOffsets.length) {
+    throw new Error(
+      `Không verify đủ ItemOption ${hookMode.toLowerCase()} hook bằng raw Code: ${verifiedCount}/${hookOffsets.length}.`
+    );
+  }
+
+
+
+  const classBytes = toArrayBuffer(target.bytes);
+  const finalParsed = parseClassFile(classBytes);
+  if (finalParsed.status !== 'valid' || finalParsed.remainingBytes !== 0) {
+    throw new Error('a/bN.class không parse VALID sau ItemOption hook.');
+  }
+
+  return {
+    classBytes,
+    helperBytes: buildItemOptionRuntimeHelper(finalParsed, rules),
+    bridgeBytes: buildItemOptionLoopBridge(finalParsed),
+    ruleCount: rules.length,
+  };
+}
 
 type GenericMobDropInputRule = GenericMobDropRule & {
   /** Optional runtime range used by MobPanel rules. Mechanics rules keep min=max=quantity. */
