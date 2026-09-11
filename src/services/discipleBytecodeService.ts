@@ -21,7 +21,7 @@ export interface DiscipleDefaultsValues {
   skills: DiscipleSkillValue[];
 }
 
-export interface DiscipleClassPatchResult {
+export interface DiscipleCreationPatchResult {
   classBytes: ArrayBuffer;
   helperBytes: ArrayBuffer;
   hookAdded: boolean;
@@ -62,51 +62,46 @@ const HELPER_CLASS_INTERNAL = 'patch/PanelDiscipleDefaults';
 const HELPER_CLASS_PATH = `${HELPER_CLASS_INTERNAL}.class`;
 const HELPER_METHOD = 'apply';
 const HELPER_DESCRIPTOR = '(La/a/H;)V';
+const CREATION_METHOD_NAME = 'a';
+const CREATION_METHOD_DESCRIPTOR = '(La/a/H;BB)V';
 
-// Template compiled as straight-line bytecode, then class major retargeted to 47
-// (CLDC-era compatible). All editable values are unique CONSTANT_Integer/Long
-// entries, so writer only changes CP payloads and never resizes helper code.
-const HELPER_TEMPLATE_BASE64 = 'yv66vgAAAC8AZAoAAgADBwAEDAAFAAYBABBqYXZhL2xhbmcvT2JqZWN0AQAGPGluaXQ+AQADKClWAwaOd4EKAAkACgcACwwADAANAQAbcGF0Y2gvUGFuZWxEaXNjaXBsZURlZmF1bHRzAQAGYXNCeXRlAQAEKEkpQgkADwAQBwARDAASABMBAAVhL2EvSAEAAmFaAQABQgMGjneCCQAPABYMABcAEwEAAmJhAwaOd4MJAA8AGgwAGwATAQACYmIFAAAA0YwuKAEJAA8AHwwAIAAhAQACY2oBAAFKBQAAANGMLigCCQAPACUMACYAIQEAAmNrAwcnDgEJAA8AKQwAKgArAQACeXEBAAFJAwcnDgIJAA8ALgwALwArAQACeXIDBycOAwkADwAyDAAzACsBAAJ5cwMHJw4ECQAPADYMADcAKwEAAnl0AwcnDgUJAA8AOgwAOwArAQACeXUDBycOBgkADwA+DAA/ACsBAAJ5dgMHJw4HCQAPAEIMAEMAKwEAAnl3AwcnDggJAA8ARgwARwArAQACeXgDBycOCQkADwBKDABLACsBAAJ5eQkADwBNDABOAE8BAAJjVgEAAltJAwe/pIEJAA8AUgwAUwBPAQACY1cDCFg7AQMHv6SCAwhYOwIDB7+kgwMIWDsDAwe/pIQDCFg7BAMHv6SFAwhYOwUDB7+khgMIWDsGAwe/pIcDCFg7BwEABENvZGUBAAVhcHBseQEACihMYS9hL0g7KVYAMQAJAAIAAAAAAAMAAgAFAAYAAQBhAAAAEQABAAEAAAAFKrcAAbEAAAAAAAoADAANAAEAYQAAAA8AAQABAAAAAxqRrAAAAAAACQBiAGMAAQBhAAAA3gADAAEAAADSKhIHuAAItQAOKhIUuAAItQAVKhIYuAAItQAZKhQAHLUAHioUACK1ACQqEie1ACgqEiy1AC0qEjC1ADEqEjS1ADUqEji1ADkqEjy1AD0qEkC1AEEqEkS1AEUqEki1AEkqtABMAxJQTyq0AFEDElRPKrQATAQSVU8qtABRBBJWTyq0AEwFEldPKrQAUQUSWE8qtABMBhJZTyq0AFEGElpPKrQATAcSW08qtABRBxJcTyq0AEwIEl1PKrQAUQgSXk8qtABMEAYSX08qtABREAYSYE+xAAAAAAAA';
+// Straight-line helper. It deliberately DOES NOT overwrite aZ/ba/bb, because
+// type/planet/status belong to the game's creation/AI flow. It only applies the
+// fixed stat override after a/a/l.a(H,byte,byte) has finished its original RNG.
+const HELPER_TEMPLATE_BASE64 = 'yv66vgAAAC8AVgoAAgADBwAEDAAFAAYBABBqYXZhL2xhbmcvT2JqZWN0AQAGPGluaXQ+AQADKClWBQAAAAA2PX+BCQAKAAsHAAwMAA0ADgEABWEvYS9IAQACY2oBAAFKBQAAAAA2PX+CCQAKABIMABMADgEAAmNrAzY9f4MJAAoAFgwAFwAYAQACeXEBAAFJAzY9f4QJAAoAGwwAHAAYAQACeXIDNj1/hQkACgAfDAAgABgBAAJ5cwM2PX+GCQAKACMMACQAGAEAAnl0AzY9f4cJAAoAJwwAKAAYAQACeXUDNj1/iAkACgArDAAsABgBAAJ5dgM2PX+JCQAKAC8MADAAGAEAAnl3AzY9f4oJAAoAMwwANAAYAQACeXgDNj1/iwkACgA3DAA4ABgBAAJ5eQkACgA6DAA7ADwBAAJjVgEAAltJAzY9f5QJAAoAPwwAQAA8AQACY1cDNj1/ngM2PX+VAzY9f58DNj1/lgM2PX+gAzY9f5cDNj1/oQM2PX+YAzY9f6IDNj1/mQM2PX+jAzY9f5oDNj1/pAcATwEAG3BhdGNoL1BhbmVsRGlzY2lwbGVEZWZhdWx0cwEABENvZGUBAA9MaW5lTnVtYmVyVGFibGUBAAVhcHBseQEACihMYS9hL0g7KVYBAApTb3VyY2VGaWxlAQAaUGFuZWxEaXNjaXBsZURlZmF1bHRzLmphdmEAMQBOAAIAAAAAAAIAAgAFAAYAAQBQAAAAHQABAAEAAAAFKrcAAbEAAAABAFEAAAAGAAEAAAAEAAkAUgBTAAEAUAAAARcAAwABAAAAtyoUAAe1AAkqFAAPtQARKhIUtQAVKhIZtQAaKhIdtQAeKhIhtQAiKhIltQAmKhIptQAqKhIttQAuKhIxtQAyKhI1tQA2KrQAOQMSPU8qtAA+AxJBTyq0ADkEEkJPKrQAPgQSQ08qtAA5BRJETyq0AD4FEkVPKrQAOQYSRk8qtAA+BhJHTyq0ADkHEkhPKrQAPgcSSU8qtAA5CBJKTyq0AD4IEktPKrQAORAGEkxPKrQAPhAGEk1PsQAAAAEAUQAAAE4AEwAAAAYABwAHAA4ACAAUAAkAGgAKACAACwAmAAwALAANADIADgA4AA8APgAQAEQAEQBUABIAZAATAHQAFACEABUAlAAWAKQAFwC2ABgAAQBUAAAAAgBV';
 
-const HELPER_CP_INDEX = {
-  type: 7,
-  planet: 20,
-  status: 24,
-  power: 28,
-  potential: 34,
-  baseHp: 39,
-  baseKi: 44,
-  baseDamage: 48,
-  armor: 52,
-  critical: 56,
-  hp: 60,
-  ki: 64,
-  stamina: 68,
-  maxStamina: 72,
-  skillIds: [80, 85, 87, 89, 91, 93, 95],
-  skillLevels: [84, 86, 88, 90, 92, 94, 96],
+const SENTINEL = {
+  power: 910000001n,
+  potential: 910000002n,
+  baseHp: 910000003,
+  baseKi: 910000004,
+  baseDamage: 910000005,
+  armor: 910000006,
+  critical: 910000007,
+  hp: 910000008,
+  ki: 910000009,
+  stamina: 910000010,
+  maxStamina: 910000011,
+  skillIds: [910000020, 910000021, 910000022, 910000023, 910000024, 910000025, 910000026],
+  skillLevels: [910000030, 910000031, 910000032, 910000033, 910000034, 910000035, 910000036],
 } as const;
 
 function readU2(view: DataView, offset: number): number {
   return view.getUint16(offset, false);
 }
-
 function readU4(view: DataView, offset: number): number {
   return view.getUint32(offset, false);
 }
-
 function writeU2(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 8) & 0xff;
   bytes[offset + 1] = value & 0xff;
 }
-
 function writeU4(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 24) & 0xff;
   bytes[offset + 1] = (value >>> 16) & 0xff;
   bytes[offset + 2] = (value >>> 8) & 0xff;
   bytes[offset + 3] = value & 0xff;
 }
-
 function concatBytes(parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
   const output = new Uint8Array(total);
@@ -117,20 +112,15 @@ function concatBytes(parts: Uint8Array[]): Uint8Array {
   }
   return output;
 }
-
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
-
 function decodeBase64(value: string): Uint8Array {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) {
-    bytes[index] = binary.charCodeAt(index) & 0xff;
-  }
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index) & 0xff;
   return bytes;
 }
-
 function skipAttributes(view: DataView, offset: number, count: number): number {
   let cursor = offset;
   for (let index = 0; index < count; index++) {
@@ -145,7 +135,7 @@ function parseClassLayout(buffer: ArrayBuffer): ClassLayout {
   const bytes = new Uint8Array(buffer);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.byteLength < 10 || view.getUint32(0, false) !== 0xcafebabe) {
-    throw new Error('Class đệ tử không có magic CAFEBABE.');
+    throw new Error('Class Đệ tử không có magic CAFEBABE.');
   }
 
   const cpCount = readU2(view, 8);
@@ -160,21 +150,14 @@ function parseClassLayout(buffer: ArrayBuffer): ClassLayout {
       case 1: {
         const length = readU2(view, cursor);
         cursor += 2;
-        const value = new TextDecoder('utf-8', { fatal: false }).decode(
-          bytes.slice(cursor, cursor + length)
-        );
+        const value = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(cursor, cursor + length));
         constantPool[index] = { index, tag, payloadOffset, value };
         utf8.set(index, value);
         cursor += length;
         break;
       }
       case 3:
-        constantPool[index] = {
-          index,
-          tag,
-          payloadOffset,
-          value: view.getInt32(cursor, false),
-        };
+        constantPool[index] = { index, tag, payloadOffset, value: view.getInt32(cursor, false) };
         cursor += 4;
         break;
       case 4:
@@ -182,12 +165,7 @@ function parseClassLayout(buffer: ArrayBuffer): ClassLayout {
         cursor += 4;
         break;
       case 5:
-        constantPool[index] = {
-          index,
-          tag,
-          payloadOffset,
-          value: view.getBigInt64(cursor, false),
-        };
+        constantPool[index] = { index, tag, payloadOffset, value: view.getBigInt64(cursor, false) };
         cursor += 8;
         index++;
         if (index < cpCount) constantPool[index] = null;
@@ -199,12 +177,7 @@ function parseClassLayout(buffer: ArrayBuffer): ClassLayout {
         if (index < cpCount) constantPool[index] = null;
         break;
       case 7:
-        constantPool[index] = {
-          index,
-          tag,
-          payloadOffset,
-          nameIndex: readU2(view, cursor),
-        };
+        constantPool[index] = { index, tag, payloadOffset, nameIndex: readU2(view, cursor) };
         cursor += 2;
         break;
       case 8:
@@ -251,11 +224,9 @@ function parseClassLayout(buffer: ArrayBuffer): ClassLayout {
   }
 
   const cpEnd = cursor;
-  cursor += 6; // access_flags + this_class + super_class
-
+  cursor += 6;
   const interfaceCount = readU2(view, cursor);
   cursor += 2 + interfaceCount * 2;
-
   const fieldCount = readU2(view, cursor);
   cursor += 2;
   for (let index = 0; index < fieldCount; index++) {
@@ -268,28 +239,20 @@ function parseClassLayout(buffer: ArrayBuffer): ClassLayout {
   const methodCount = readU2(view, cursor);
   cursor += 2;
   const methods: MethodLayout[] = [];
-
   for (let index = 0; index < methodCount; index++) {
     cursor += 2;
-    const nameIndex = readU2(view, cursor);
-    cursor += 2;
-    const descriptorIndex = readU2(view, cursor);
-    cursor += 2;
-    const attributeCount = readU2(view, cursor);
-    cursor += 2;
-
+    const nameIndex = readU2(view, cursor); cursor += 2;
+    const descriptorIndex = readU2(view, cursor); cursor += 2;
+    const attributeCount = readU2(view, cursor); cursor += 2;
     const name = utf8.get(nameIndex) ?? '';
     const descriptor = utf8.get(descriptorIndex) ?? '';
 
     for (let attributeIndex = 0; attributeIndex < attributeCount; attributeIndex++) {
-      const attributeNameIndex = readU2(view, cursor);
-      cursor += 2;
+      const attributeNameIndex = readU2(view, cursor); cursor += 2;
       const attributeLengthOffset = cursor;
-      const attributeLength = readU4(view, cursor);
-      cursor += 4;
+      const attributeLength = readU4(view, cursor); cursor += 4;
       const dataStart = cursor;
       const attributeName = utf8.get(attributeNameIndex) ?? '';
-
       if (attributeName === 'Code') {
         const codeLengthOffset = dataStart + 4;
         const codeLength = readU4(view, codeLengthOffset);
@@ -304,54 +267,32 @@ function parseClassLayout(buffer: ArrayBuffer): ClassLayout {
           codeEnd: codeStart + codeLength,
         });
       }
-
       cursor = dataStart + attributeLength;
     }
   }
-
   return { cpCount, cpEnd, constantPool, utf8, methods };
 }
 
-function resolveMethodRef(
-  layout: ClassLayout,
-  index: number
-): { owner: string; name: string; descriptor: string } | null {
+function resolveMethodRef(layout: ClassLayout, index: number): { owner: string; name: string; descriptor: string } | null {
   const ref = layout.constantPool[index];
   if (!ref || ref.tag !== 10 || !ref.classIndex || !ref.nameAndTypeIndex) return null;
   const classEntry = layout.constantPool[ref.classIndex];
-  const nameAndType = layout.constantPool[ref.nameAndTypeIndex];
-  if (
-    !classEntry ||
-    classEntry.tag !== 7 ||
-    !classEntry.nameIndex ||
-    !nameAndType ||
-    nameAndType.tag !== 12 ||
-    !nameAndType.nameIndex ||
-    !nameAndType.descriptorIndex
-  ) {
-    return null;
-  }
+  const nt = layout.constantPool[ref.nameAndTypeIndex];
+  if (!classEntry || classEntry.tag !== 7 || !classEntry.nameIndex || !nt || nt.tag !== 12 || !nt.nameIndex || !nt.descriptorIndex) return null;
   return {
     owner: layout.utf8.get(classEntry.nameIndex) ?? '',
-    name: layout.utf8.get(nameAndType.nameIndex) ?? '',
-    descriptor: layout.utf8.get(nameAndType.descriptorIndex) ?? '',
+    name: layout.utf8.get(nt.nameIndex) ?? '',
+    descriptor: layout.utf8.get(nt.descriptorIndex) ?? '',
   };
 }
 
 function findHelperMethodRef(layout: ClassLayout): number | null {
   for (let index = 1; index < layout.cpCount; index++) {
     const resolved = resolveMethodRef(layout, index);
-    if (
-      resolved?.owner === HELPER_CLASS_INTERNAL &&
-      resolved.name === HELPER_METHOD &&
-      resolved.descriptor === HELPER_DESCRIPTOR
-    ) {
-      return index;
-    }
+    if (resolved?.owner === HELPER_CLASS_INTERNAL && resolved.name === HELPER_METHOD && resolved.descriptor === HELPER_DESCRIPTOR) return index;
   }
   return null;
 }
-
 function utf8Entry(value: string): Uint8Array {
   const encoded = new TextEncoder().encode(value);
   const out = new Uint8Array(3 + encoded.byteLength);
@@ -360,14 +301,12 @@ function utf8Entry(value: string): Uint8Array {
   out.set(encoded, 3);
   return out;
 }
-
 function u2Entry(tag: number, value: number): Uint8Array {
   const out = new Uint8Array(3);
   out[0] = tag;
   writeU2(out, 1, value);
   return out;
 }
-
 function pairEntry(tag: number, first: number, second: number): Uint8Array {
   const out = new Uint8Array(5);
   out[0] = tag;
@@ -376,23 +315,19 @@ function pairEntry(tag: number, first: number, second: number): Uint8Array {
   return out;
 }
 
-function ensureDiscipleHook(input: ArrayBuffer): { bytes: ArrayBuffer; hookAdded: boolean } {
+function ensureDiscipleCreationHook(input: ArrayBuffer): { bytes: ArrayBuffer; hookAdded: boolean } {
   let bytes = new Uint8Array(input.slice(0));
   let layout = parseClassLayout(toArrayBuffer(bytes));
   let helperRef = findHelperMethodRef(layout);
 
   if (helperRef === null) {
-    if (layout.cpCount + 6 >= 0xffff) {
-      throw new Error('Constant Pool a/a/H đã quá đầy để gắn Disciple writer.');
-    }
-
+    if (layout.cpCount + 6 >= 0xffff) throw new Error('Constant Pool a/a/l đã quá đầy để gắn Disciple writer.');
     const classUtf8Index = layout.cpCount;
     const classIndex = classUtf8Index + 1;
     const methodUtf8Index = classUtf8Index + 2;
     const descriptorUtf8Index = classUtf8Index + 3;
     const nameAndTypeIndex = classUtf8Index + 4;
     helperRef = classUtf8Index + 5;
-
     const cpAppend = concatBytes([
       utf8Entry(HELPER_CLASS_INTERNAL),
       u2Entry(7, classUtf8Index),
@@ -401,7 +336,6 @@ function ensureDiscipleHook(input: ArrayBuffer): { bytes: ArrayBuffer; hookAdded
       pairEntry(12, methodUtf8Index, descriptorUtf8Index),
       pairEntry(10, classIndex, nameAndTypeIndex),
     ]);
-
     const next = new Uint8Array(bytes.byteLength + cpAppend.byteLength);
     next.set(bytes.slice(0, layout.cpEnd), 0);
     next.set(cpAppend, layout.cpEnd);
@@ -411,178 +345,116 @@ function ensureDiscipleHook(input: ArrayBuffer): { bytes: ArrayBuffer; hookAdded
     layout = parseClassLayout(toArrayBuffer(bytes));
   }
 
-  const method = layout.methods.find(
-    (candidate) => candidate.name === 'gf' && candidate.descriptor === '()V'
-  );
-  if (!method) throw new Error('Không tìm thấy a/a/H.gf()V để gắn Disciple writer.');
-
+  const method = layout.methods.find((candidate) => candidate.name === CREATION_METHOD_NAME && candidate.descriptor === CREATION_METHOD_DESCRIPTOR);
+  if (!method) throw new Error('Không tìm thấy a/a/l.a(H,byte,byte)V — method tạo Đệ tử thật.');
   const code = bytes.slice(method.codeStart, method.codeEnd);
-  const callPattern = new Uint8Array([
-    0x2a,
-    0xb8,
-    (helperRef >>> 8) & 0xff,
-    helperRef & 0xff,
-    0xb1,
-  ]);
-
-  if (
-    code.byteLength >= callPattern.byteLength &&
-    callPattern.every(
-      (value, index) => code[code.byteLength - callPattern.byteLength + index] === value
-    )
-  ) {
+  const callPattern = new Uint8Array([0x2a, 0xb8, (helperRef >>> 8) & 0xff, helperRef & 0xff, 0xb1]);
+  if (code.byteLength >= callPattern.byteLength && callPattern.every((value, index) => code[code.byteLength - callPattern.byteLength + index] === value)) {
     return { bytes: toArrayBuffer(bytes), hookAdded: false };
   }
+  if (code[code.byteLength - 1] !== 0xb1) throw new Error('Method tạo Đệ tử không kết thúc bằng RETURN như JAR đã xác minh.');
 
-  if (code[code.byteLength - 1] !== 0xb1) {
-    throw new Error('a/a/H.gf() không kết thúc bằng RETURN như JAR đã xác minh.');
-  }
-
-  // gf() gốc chỉ có branch target <= 141; hook được chèn ngay trước RETURN @150.
-  // Vì không đổi offset của instruction/StackMap frame cũ nên writer không phải
-  // rebuild StackMapTable hay branch offsets.
+  // Insert AFTER all original RNG/initialization, immediately before final RETURN.
+  // Existing branch targets are earlier, so their offsets and stack map positions stay valid.
   const insertionOffset = method.codeEnd - 1;
-  const call = new Uint8Array([
-    0x2a, // aload_0
-    0xb8, // invokestatic
-    (helperRef >>> 8) & 0xff,
-    helperRef & 0xff,
-  ]);
-
+  const call = new Uint8Array([0x2a, 0xb8, (helperRef >>> 8) & 0xff, helperRef & 0xff]);
   const output = new Uint8Array(bytes.byteLength + call.byteLength);
   output.set(bytes.slice(0, insertionOffset), 0);
   output.set(call, insertionOffset);
   output.set(bytes.slice(insertionOffset), insertionOffset + call.byteLength);
+  const oldView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  writeU4(output, method.codeLengthOffset, method.codeLength + call.byteLength);
+  writeU4(output, method.attributeLengthOffset, readU4(oldView, method.attributeLengthOffset) + call.byteLength);
 
-  const previousCodeLength = method.codeLength;
-  const previousAttributeLength = readU4(
-    new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-    method.attributeLengthOffset
-  );
-  writeU4(output, method.codeLengthOffset, previousCodeLength + call.byteLength);
-  writeU4(output, method.attributeLengthOffset, previousAttributeLength + call.byteLength);
-
-  const verifiedLayout = parseClassLayout(toArrayBuffer(output));
-  const verifiedMethod = verifiedLayout.methods.find(
-    (candidate) => candidate.name === 'gf' && candidate.descriptor === '()V'
-  );
-  if (!verifiedMethod) throw new Error('Không reparse được a/a/H.gf() sau khi gắn hook.');
-  const verifiedCode = output.slice(verifiedMethod.codeStart, verifiedMethod.codeEnd);
-  const verifiedRef = findHelperMethodRef(verifiedLayout);
-  if (verifiedRef === null || verifiedCode[verifiedCode.byteLength - 1] !== 0xb1) {
-    throw new Error('Verify Disciple hook trong a/a/H.gf() thất bại.');
-  }
-
+  const verifyLayout = parseClassLayout(toArrayBuffer(output));
+  const verifyMethod = verifyLayout.methods.find((candidate) => candidate.name === CREATION_METHOD_NAME && candidate.descriptor === CREATION_METHOD_DESCRIPTOR);
+  if (!verifyMethod) throw new Error('Không reparse được method tạo Đệ tử sau khi gắn hook.');
+  const verifyCode = output.slice(verifyMethod.codeStart, verifyMethod.codeEnd);
+  const verifyRef = findHelperMethodRef(verifyLayout);
+  if (verifyRef === null || verifyCode[verifyCode.byteLength - 1] !== 0xb1) throw new Error('Verify hook tạo Đệ tử thất bại.');
   return { bytes: toArrayBuffer(output), hookAdded: true };
 }
 
-function cpEntryAt(layout: ClassLayout, index: number, tag: number): CpEntry {
-  const entry = layout.constantPool[index];
-  if (!entry || entry.tag !== tag) {
-    throw new Error(`Disciple helper CP #${index} không đúng tag ${tag}.`);
-  }
-  return entry;
+function findCpByValue(layout: ClassLayout, tag: number, value: number | bigint): CpEntry {
+  const matches = layout.constantPool.filter((entry): entry is CpEntry => Boolean(entry && entry.tag === tag && entry.value === value));
+  if (matches.length !== 1) throw new Error(`Disciple helper sentinel ${String(value)} không unique (found ${matches.length}).`);
+  return matches[0];
 }
 
 function patchHelperTemplate(values: DiscipleDefaultsValues): ArrayBuffer {
   const bytes = decodeBase64(HELPER_TEMPLATE_BASE64);
   const layout = parseClassLayout(toArrayBuffer(bytes));
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const patchInt = (sentinel: number, value: number) => view.setInt32(findCpByValue(layout, 3, sentinel).payloadOffset, Math.trunc(value), false);
+  const patchLong = (sentinel: bigint, value: number) => view.setBigInt64(findCpByValue(layout, 5, sentinel).payloadOffset, BigInt(Math.trunc(value)), false);
 
-  const writeInt = (index: number, value: number) => {
-    const entry = cpEntryAt(layout, index, 3);
-    view.setInt32(entry.payloadOffset, Math.trunc(value), false);
-  };
-  const writeLong = (index: number, value: number) => {
-    const entry = cpEntryAt(layout, index, 5);
-    view.setBigInt64(entry.payloadOffset, BigInt(Math.trunc(value)), false);
-  };
-
-  writeInt(HELPER_CP_INDEX.type, values.type);
-  writeInt(HELPER_CP_INDEX.planet, values.planet);
-  writeInt(HELPER_CP_INDEX.status, values.status);
-  writeLong(HELPER_CP_INDEX.power, values.power);
-  writeLong(HELPER_CP_INDEX.potential, values.potential);
-  writeInt(HELPER_CP_INDEX.baseHp, values.baseHp);
-  writeInt(HELPER_CP_INDEX.baseKi, values.baseKi);
-  writeInt(HELPER_CP_INDEX.baseDamage, values.baseDamage);
-  writeInt(HELPER_CP_INDEX.armor, values.armor);
-  writeInt(HELPER_CP_INDEX.critical, values.critical);
-  writeInt(HELPER_CP_INDEX.hp, values.hp);
-  writeInt(HELPER_CP_INDEX.ki, values.ki);
-  writeInt(HELPER_CP_INDEX.stamina, values.stamina);
-  writeInt(HELPER_CP_INDEX.maxStamina, values.maxStamina);
-
+  patchLong(SENTINEL.power, values.power);
+  patchLong(SENTINEL.potential, values.potential);
+  patchInt(SENTINEL.baseHp, values.baseHp);
+  patchInt(SENTINEL.baseKi, values.baseKi);
+  patchInt(SENTINEL.baseDamage, values.baseDamage);
+  patchInt(SENTINEL.armor, values.armor);
+  patchInt(SENTINEL.critical, values.critical);
+  patchInt(SENTINEL.hp, values.hp);
+  patchInt(SENTINEL.ki, values.ki);
+  patchInt(SENTINEL.stamina, values.stamina);
+  patchInt(SENTINEL.maxStamina, values.maxStamina);
   for (let index = 0; index < 7; index++) {
     const skill = values.skills[index] ?? { id: -1, level: 0 };
-    writeInt(HELPER_CP_INDEX.skillIds[index], skill.id);
-    writeInt(HELPER_CP_INDEX.skillLevels[index], skill.level);
+    patchInt(SENTINEL.skillIds[index], skill.id);
+    patchInt(SENTINEL.skillLevels[index], skill.level);
   }
-
   return toArrayBuffer(bytes);
 }
 
-export function inspectDiscipleHelperDefaults(
-  input: ArrayBuffer
-): DiscipleDefaultsValues {
+export function inspectDiscipleHelperDefaults(input: ArrayBuffer): DiscipleDefaultsValues {
   const layout = parseClassLayout(input);
-
-  const readInt = (index: number): number => {
-    const entry = cpEntryAt(layout, index, 3);
-    return Number(entry.value ?? 0);
-  };
-  const readLong = (index: number): number => {
-    const entry = cpEntryAt(layout, index, 5);
-    return Number(entry.value ?? 0n);
-  };
-
+  const readInt = (sentinel: number): number => Number(findCpByValue(layout, 3, sentinel).value ?? 0);
+  const readLong = (sentinel: bigint): number => Number(findCpByValue(layout, 5, sentinel).value ?? 0n);
+  // This inspection is only valid on the unpatched template. Patched helpers no
+  // longer contain sentinels, so callers should not use it for persistence.
   return {
-    type: readInt(HELPER_CP_INDEX.type),
-    planet: readInt(HELPER_CP_INDEX.planet),
-    status: readInt(HELPER_CP_INDEX.status),
-    power: readLong(HELPER_CP_INDEX.power),
-    potential: readLong(HELPER_CP_INDEX.potential),
-    baseHp: readInt(HELPER_CP_INDEX.baseHp),
-    baseKi: readInt(HELPER_CP_INDEX.baseKi),
-    baseDamage: readInt(HELPER_CP_INDEX.baseDamage),
-    armor: readInt(HELPER_CP_INDEX.armor),
-    critical: readInt(HELPER_CP_INDEX.critical),
-    hp: readInt(HELPER_CP_INDEX.hp),
-    ki: readInt(HELPER_CP_INDEX.ki),
-    stamina: readInt(HELPER_CP_INDEX.stamina),
-    maxStamina: readInt(HELPER_CP_INDEX.maxStamina),
-    skills: Array.from({ length: 7 }, (_, index) => ({
-      id: readInt(HELPER_CP_INDEX.skillIds[index]),
-      level: readInt(HELPER_CP_INDEX.skillLevels[index]),
-    })),
+    type: 0,
+    planet: 0,
+    status: 0,
+    power: readLong(SENTINEL.power),
+    potential: readLong(SENTINEL.potential),
+    baseHp: readInt(SENTINEL.baseHp),
+    baseKi: readInt(SENTINEL.baseKi),
+    baseDamage: readInt(SENTINEL.baseDamage),
+    armor: readInt(SENTINEL.armor),
+    critical: readInt(SENTINEL.critical),
+    hp: readInt(SENTINEL.hp),
+    ki: readInt(SENTINEL.ki),
+    stamina: readInt(SENTINEL.stamina),
+    maxStamina: readInt(SENTINEL.maxStamina),
+    skills: Array.from({ length: 7 }, (_, index) => ({ id: readInt(SENTINEL.skillIds[index]), level: readInt(SENTINEL.skillLevels[index]) })),
   };
 }
 
-export function patchDiscipleDefaultsClass(
-  input: ArrayBuffer,
+export function patchDiscipleCreationClass(
+  creationClassInput: ArrayBuffer,
   values: DiscipleDefaultsValues
-): DiscipleClassPatchResult {
-  const hooked = ensureDiscipleHook(input);
+): DiscipleCreationPatchResult {
+  const hooked = ensureDiscipleCreationHook(creationClassInput);
   const helperBytes = patchHelperTemplate(values);
-  const verify = inspectDiscipleHelperDefaults(helperBytes);
-
-  if (JSON.stringify(verify) !== JSON.stringify(values)) {
-    throw new Error('Verify giá trị Disciple helper sau patch không khớp draft.');
-  }
-
   return {
     classBytes: hooked.bytes,
     helperBytes,
     hookAdded: hooked.hookAdded,
-    patchCount: 3 + 2 + 9 + 14 + (hooked.hookAdded ? 1 : 0),
+    patchCount: 2 + 9 + 14 + (hooked.hookAdded ? 1 : 0),
     diagnostics: [
-      `a/a/H.gf(): ${hooked.hookAdded ? 'đã gắn' : 'đã có'} hook ${HELPER_CLASS_INTERNAL}.apply(H).`,
-      'Disciple helper: type/planet/status + power/potential + combat/runtime + 7 skill slots đã ghi.',
-      'Writer chỉ thay default/reset đệ tử; save codec a/a/N không bị sửa.',
+      `a/a/l.a(H,BB): ${hooked.hookAdded ? 'đã gắn' : 'đã có'} hook fixed override SAU logic random gốc.`,
+      'Giữ nguyên aZ/ba/bb; chỉ override power/potential + combat/runtime + 7 skill slots.',
+      'a/a/H.gf() không còn là target writer vì creation flow ghi đè các field ngay sau gf().',
+      'Save codec a/a/N không bị sửa.',
     ],
   };
 }
 
 export function getDiscipleHelperClassPath(): string {
   return HELPER_CLASS_PATH;
+}
+export function getDiscipleCreationClassPath(): string {
+  return 'a/a/l.class';
 }

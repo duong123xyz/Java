@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import './mobileLayoutFixes.css';
 import {
   UserRound,
   RefreshCw,
@@ -91,7 +92,7 @@ export function CharacterPanel({
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center rounded-2xl border border-zinc-200 bg-white">
+      <div className="min-h-[260px] xl:h-full flex items-center justify-center rounded-2xl border border-zinc-200 bg-white">
         <div className="text-center space-y-2">
           <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin mx-auto" />
           <div className="text-xs font-mono text-zinc-500">
@@ -104,7 +105,7 @@ export function CharacterPanel({
 
   if (error || !snapshot) {
     return (
-      <div className="h-full flex items-center justify-center rounded-2xl border border-red-200 bg-red-50">
+      <div className="min-h-[260px] xl:h-full flex items-center justify-center rounded-2xl border border-red-200 bg-red-50">
         <div className="max-w-xl p-4 text-red-700 text-xs font-mono">
           <div className="flex items-center gap-2 font-bold mb-2">
             <AlertTriangle className="w-4 h-4" />
@@ -126,18 +127,18 @@ export function CharacterPanel({
   const dirtyCount = getDirtyCharacterCount(session, snapshot.profiles) + discipleDirtyCount;
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3">
-      <div className="shrink-0 rounded-2xl border border-zinc-200 bg-white shadow-sm px-3 sm:px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0 w-full sm:w-auto">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-100 to-cyan-100 border border-indigo-200 flex items-center justify-center">
+    <div className="nro-character-panel w-full min-w-0 flex flex-col gap-3 xl:h-full xl:min-h-0">
+      <div className="shrink-0 rounded-2xl border border-zinc-200 bg-white shadow-sm px-3 sm:px-4 py-3 flex items-start justify-between gap-3 min-w-0">
+        <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+          <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-br from-indigo-100 to-cyan-100 border border-indigo-200 flex items-center justify-center shrink-0">
             <UserRound className="w-5 h-5 text-indigo-500" />
           </div>
           <div className="min-w-0">
             <div className="text-base font-bold text-zinc-900">Nhân vật</div>
-            <div className="text-[11px] text-zinc-500">
+            <div className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2 sm:line-clamp-none">
               Xem trực quan nhân vật khởi tạo theo hành tinh và chỉnh nhanh bộ chỉ số mặc định.
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <div className="mt-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap scrollbar-none touch-pan-x">
               <StatChip text="3 hành tinh" />
               <StatChip text="Sprite preview" />
               <StatChip text="H.p(byte)" />
@@ -169,7 +170,7 @@ export function CharacterPanel({
         </div>
       </div>
 
-      <div className="shrink-0 flex items-center gap-1 p-1 rounded-xl bg-white border border-zinc-200 shadow-sm w-full sm:w-fit overflow-x-auto">
+      <div className="shrink-0 flex items-center gap-1 p-1 rounded-xl bg-white border border-zinc-200 shadow-sm w-full sm:w-fit overflow-x-auto scrollbar-none touch-pan-x">
         <ViewButton
           active={view === 'starter'}
           onClick={() => setView('starter')}
@@ -190,7 +191,7 @@ export function CharacterPanel({
         />
       </div>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-w-0 xl:min-h-0 xl:flex-1">
         {view === 'starter' ? (
           <StarterEditor
             session={session}
@@ -269,8 +270,8 @@ function StarterEditor({
   };
 
   return (
-    <div className="h-full min-h-0 grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-3">
-      <aside className="min-h-0 rounded-2xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col">
+    <div className="nro-starter-editor grid grid-cols-1 gap-3 min-w-0 xl:h-full xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
+      <aside className="min-w-0 rounded-2xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col xl:min-h-0">
         <div className="px-4 py-3 border-b border-zinc-200 bg-gradient-to-r from-indigo-50 to-cyan-50">
           <div className="text-[11px] uppercase tracking-wider text-zinc-500 font-mono">
             Chọn mẫu nhân vật
@@ -278,7 +279,7 @@ function StarterEditor({
           <div className="text-sm font-bold text-zinc-900 mt-1">Hiển thị trực quan theo hành tinh</div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="p-3 flex gap-2 overflow-x-auto scrollbar-none touch-pan-x xl:min-h-0 xl:flex-1 xl:block xl:space-y-3 xl:overflow-y-auto">
           {snapshot.profiles.map((profile) => {
             const profileDraft = getCharacterDraft(session, profile);
             const profileDirty = isCharacterDraftDirty(profile, profileDraft);
@@ -289,14 +290,14 @@ function StarterEditor({
                 key={profile.planet}
                 type="button"
                 onClick={() => onSelectPlanet(profile.planet)}
-                className={`w-full rounded-2xl border text-left overflow-hidden cursor-pointer transition-all ${
+                className={`min-w-[260px] sm:min-w-[300px] xl:min-w-0 xl:w-full rounded-2xl border text-left overflow-hidden cursor-pointer transition-all ${
                   selected
                     ? 'border-indigo-300 bg-indigo-50 shadow-sm'
                     : 'border-zinc-200 bg-white hover:bg-zinc-50'
                 }`}
               >
                 <div className="p-3 flex items-center gap-3">
-                  <div className="w-[92px] shrink-0">
+                  <div className="w-[72px] sm:w-[92px] shrink-0">
                     <CharacterSpritePreview
                       session={session}
                       head={profile.previewHead}
@@ -335,9 +336,9 @@ function StarterEditor({
         </div>
       </aside>
 
-      <section className="min-h-0 rounded-2xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col">
-        <div className="shrink-0 px-4 py-3 border-b border-zinc-200 bg-gradient-to-r from-white via-indigo-50/40 to-cyan-50/60 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-3 min-w-0">
+      <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col xl:min-h-0">
+        <div className="shrink-0 px-3 sm:px-4 py-3 border-b border-zinc-200 bg-gradient-to-r from-white via-indigo-50/40 to-cyan-50/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
             <PlanetPill planet={selectedProfile.planet} />
             <div className="min-w-0">
               <div className="text-lg font-bold text-zinc-900">{selectedProfile.planetName}</div>
@@ -356,14 +357,14 @@ function StarterEditor({
             type="button"
             onClick={reset}
             disabled={!dirty}
-            className="px-3 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] text-zinc-700 font-medium flex items-center gap-1 cursor-pointer"
+            className="w-full sm:w-auto justify-center px-3 py-2 sm:py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] text-zinc-700 font-medium flex items-center gap-1 cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Hoàn tác
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="p-3 sm:p-4 space-y-4 min-w-0 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
           <div className="grid grid-cols-1 2xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
             <CharacterSpritePreview
               session={session}
@@ -441,7 +442,7 @@ function StarterEditor({
               <QuickButton label="HP/KI/ATK x10" onClick={() => multiplyCombat(10)} />
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
               <NumberEditor label="HP gốc" technical="xx" value={draft.baseHp} min={1} onChange={(baseHp) => patch({ baseHp })} />
               <NumberEditor label="KI gốc" technical="xy" value={draft.baseKi} min={1} onChange={(baseKi) => patch({ baseKi })} />
               <NumberEditor label="Sức đánh gốc" technical="xz" value={draft.baseDamage} min={1} onChange={(baseDamage) => patch({ baseDamage })} />
@@ -459,7 +460,7 @@ function StarterEditor({
               <QuickButton label="Power/Potential x10" onClick={() => multiplyProgress(10)} />
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
               <NumberEditor label="Vàng" technical="bS" value={draft.gold} min={0} onChange={(gold) => patch({ gold })} />
               <NumberEditor label="Ngọc" technical="xv" value={draft.gems} min={0} onChange={(gems) => patch({ gems })} />
               <NumberEditor label="Hồng ngọc" technical="xw" value={draft.ruby} min={0} onChange={(ruby) => patch({ ruby })} />
@@ -470,7 +471,7 @@ function StarterEditor({
           </EditorSection>
 
           <EditorSection title="Vị trí & trạng thái khởi tạo" icon={<MapPin className="w-4 h-4 text-sky-500" />}>
-            <div className="grid grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8 gap-3">
               <NumberEditor label="Map" technical="vP" value={draft.mapId} min={0} onChange={(mapId) => patch({ mapId })} />
               <NumberEditor label="X" technical="cp" value={draft.spawnX} min={0} onChange={(spawnX) => patch({ spawnX })} />
               <NumberEditor label="Y" technical="cq" value={draft.spawnY} min={0} onChange={(spawnY) => patch({ spawnY })} />
@@ -498,7 +499,7 @@ function SaveSchemaView({ snapshot }: { snapshot: CharacterAnalysisSnapshot }) {
   const structure = snapshot.structure;
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto space-y-3">
+    <div className="w-full min-w-0 space-y-3 xl:h-full xl:min-h-0 xl:overflow-y-auto">
       <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
         <CapacityCard icon={<Shield className="w-4 h-4 text-blue-500" />} label="Trang bị" value={structure.equipmentSlots} field="d" />
         <CapacityCard icon={<Package className="w-4 h-4 text-emerald-500" />} label="Hành trang" value={structure.bagSlots} field="e" />
@@ -521,13 +522,13 @@ function SaveSchemaView({ snapshot }: { snapshot: CharacterAnalysisSnapshot }) {
           {snapshot.saveFields.map((field) => (
             <div
               key={field.field}
-              className="px-4 py-3 border-b border-r border-zinc-200 grid grid-cols-[56px_minmax(0,1fr)_98px_auto] gap-2 items-center"
+              className="px-3 sm:px-4 py-3 border-b border-r border-zinc-200 grid grid-cols-[48px_minmax(0,1fr)] sm:grid-cols-[56px_minmax(0,1fr)_98px_auto] gap-2 items-center min-w-0"
             >
               <code className="text-[10px] text-indigo-600 font-bold">{field.field}</code>
               <span className="text-[12px] text-zinc-700">{field.label}</span>
-              <span className="text-[10px] text-zinc-500 font-mono">{field.type}</span>
+              <span className="col-start-2 sm:col-start-auto text-[10px] text-zinc-500 font-mono break-words">{field.type}</span>
               <span
-                className={`px-1.5 py-0.5 rounded-full border text-[9px] font-mono ${
+                className={`col-start-1 row-start-2 sm:col-start-auto sm:row-start-auto px-1.5 py-0.5 rounded-full border text-[9px] font-mono w-fit ${
                   field.editableInStarter
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
                     : 'bg-zinc-50 border-zinc-200 text-zinc-500'
@@ -645,6 +646,7 @@ function NumberEditor({
       </span>
       <input
         type="number"
+        inputMode="numeric"
         value={value}
         min={min}
         max={max}

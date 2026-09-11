@@ -16,9 +16,14 @@ import {
   isDiscipleDraftDirty,
 } from './discipleDataService';
 import {
+  getDiscipleCreationClassPath,
   getDiscipleHelperClassPath,
-  patchDiscipleDefaultsClass,
+  patchDiscipleCreationClass,
 } from './discipleBytecodeService';
+import {
+  buildAdvancedMechanicsPatches,
+  getAdvancedMechanicsDirtyCount,
+} from './advancedMechanicsService';
 
 export interface CharacterPatchBlocker {
   field: string;
@@ -235,6 +240,24 @@ export async function buildCharacterPatches(
       getCharacterDraft(session, profile)
     );
     const discipleDraft = getDiscipleDraft(session, discipleSnapshot);
+    const advancedDirtyCount = getAdvancedMechanicsDirtyCount(session);
+    const advancedResult = await buildAdvancedMechanicsPatches(session);
+    // Advanced writer còn đảm nhiệm bridge TNSM toàn game -> Đệ tử.
+    // Bridge này không phải một draft riêng nên có thể có rewritten class dù advancedDirtyCount = 0.
+    const hasAdvancedRuntimePatch =
+      advancedResult.rewrittenClasses.size > 0 || advancedResult.appliedPatchCount > 0;
+
+    if (advancedResult.status === 'FAILED') {
+      return {
+        status: 'FAILED',
+        rewrittenClasses: new Map(),
+        appliedDraftCount: advancedDirtyCount,
+        appliedPatchCount: 0,
+        blockers: [],
+        diagnostics: advancedResult.diagnostics,
+        errorMessage: advancedResult.errorMessage || 'Advanced mechanics writer thất bại.',
+      };
+    }
 
     const starterDraftCount = profiles.reduce(
       (count, profile, index) =>
@@ -243,9 +266,9 @@ export async function buildCharacterPatches(
       0
     );
     const discipleDirty = isDiscipleDraftDirty(session, discipleDraft);
-    const appliedDraftCount = starterDraftCount + (discipleDirty ? 1 : 0);
+    const appliedDraftCount = starterDraftCount + (discipleDirty ? 1 : 0) + advancedDirtyCount;
 
-    if (appliedDraftCount === 0) {
+    if (appliedDraftCount === 0 && !hasAdvancedRuntimePatch) {
       return {
         status: 'NO_CHANGES',
         rewrittenClasses: new Map(),
@@ -256,7 +279,9 @@ export async function buildCharacterPatches(
       };
     }
 
-    const blockers: CharacterPatchBlocker[] = [];
+    const blockers: CharacterPatchBlocker[] = advancedResult.status === 'BLOCKED'
+      ? advancedResult.blockers.map((blocker) => ({ ...blocker }))
+      : [];
 
     if (starterDraftCount > 0) {
       if (!snapshot.verified) {
@@ -275,7 +300,7 @@ export async function buildCharacterPatches(
 
     if (discipleDirty && !discipleSnapshot.verified) {
       blockers.push({
-        field: 'H.gf()/Đệ tử',
+        field: 'a/a/l.a(H,BB)/Đệ tử',
         message:
           `Source-backed verification Đệ tử chưa đạt: ${discipleSnapshot.verificationDetail}`,
       });
@@ -292,50 +317,61 @@ export async function buildCharacterPatches(
       };
     }
 
-    const entry = session.zip.file('a/a/H.class');
-    if (!entry) {
-      return {
-        status: 'FAILED',
-        rewrittenClasses: new Map(),
-        appliedDraftCount,
-        appliedPatchCount: 0,
-        blockers: [],
-        diagnostics: [],
-        errorMessage: 'Không tìm thấy a/a/H.class trong JAR.',
-      };
-    }
-
-    let workingBytes = await entry.async('arraybuffer');
-    let appliedPatchCount = 0;
-    const diagnostics: string[] = [];
-    const rewrittenClasses = new Map<string, ArrayBuffer>();
+    let appliedPatchCount = advancedResult.appliedPatchCount;
+    const diagnostics: string[] = [...advancedResult.diagnostics];
+    const rewrittenClasses = new Map<string, ArrayBuffer>(advancedResult.rewrittenClasses);
 
     if (starterDraftCount > 0) {
+      const entry = session.zip.file('a/a/H.class');
+      if (!entry) {
+        return {
+          status: 'FAILED',
+          rewrittenClasses: new Map(),
+          appliedDraftCount,
+          appliedPatchCount: 0,
+          blockers: [],
+          diagnostics: [],
+          errorMessage: 'Không tìm thấy a/a/H.class trong JAR.',
+        };
+      }
+      const originalBytes = await entry.async('arraybuffer');
       const patched = patchCharacterStarterClass(
-        workingBytes,
+        originalBytes,
         toPatchValues(drafts)
       );
-      workingBytes = patched.bytes;
       appliedPatchCount += patched.patchCount;
       diagnostics.push(
         `H.p(B): ${patched.patchCount} numeric producer đã đổi.`,
         `H.p(B) code_length delta: ${patched.codeLengthDelta >= 0 ? '+' : ''}${patched.codeLengthDelta}.`,
         ...patched.diagnostics
       );
+      rewrittenClasses.set('a/a/H.class', patched.bytes);
     }
 
     if (discipleDirty) {
-      const patched = patchDiscipleDefaultsClass(
-        workingBytes,
+      const creationPath = getDiscipleCreationClassPath();
+      const entry = session.zip.file(creationPath);
+      if (!entry) {
+        return {
+          status: 'FAILED',
+          rewrittenClasses: new Map(),
+          appliedDraftCount,
+          appliedPatchCount,
+          blockers: [],
+          diagnostics,
+          errorMessage: `Không tìm thấy ${creationPath} trong JAR.`,
+        };
+      }
+      const originalBytes = rewrittenClasses.get(creationPath) ?? await entry.async('arraybuffer');
+      const patched = patchDiscipleCreationClass(
+        originalBytes,
         discipleDraft
       );
-      workingBytes = patched.classBytes;
       appliedPatchCount += patched.patchCount;
       diagnostics.push(...patched.diagnostics);
+      rewrittenClasses.set(creationPath, patched.classBytes);
       rewrittenClasses.set(getDiscipleHelperClassPath(), patched.helperBytes);
     }
-
-    rewrittenClasses.set('a/a/H.class', workingBytes);
 
     return {
       status: 'READY',
