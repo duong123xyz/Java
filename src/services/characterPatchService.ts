@@ -10,6 +10,15 @@ import {
   CharacterBytecodePatchValues,
   patchCharacterStarterClass,
 } from './characterBytecodeService';
+import {
+  analyzeDiscipleSchema,
+  getDiscipleDraft,
+  isDiscipleDraftDirty,
+} from './discipleDataService';
+import {
+  getDiscipleHelperClassPath,
+  patchDiscipleDefaultsClass,
+} from './discipleBytecodeService';
 
 export interface CharacterPatchBlocker {
   field: string;
@@ -217,18 +226,24 @@ export async function buildCharacterPatches(
   session: LoadedJarSession
 ): Promise<CharacterPatchResult> {
   try {
-    const snapshot = await analyzeCharacterDefaults(session);
+    const [snapshot, discipleSnapshot] = await Promise.all([
+      analyzeCharacterDefaults(session),
+      analyzeDiscipleSchema(session),
+    ]);
     const profiles = snapshot.profiles;
     const drafts = profiles.map((profile) =>
       getCharacterDraft(session, profile)
     );
+    const discipleDraft = getDiscipleDraft(session, discipleSnapshot);
 
-    const appliedDraftCount = profiles.reduce(
+    const starterDraftCount = profiles.reduce(
       (count, profile, index) =>
         count +
         (isCharacterDraftDirty(profile, drafts[index]) ? 1 : 0),
       0
     );
+    const discipleDirty = isDiscipleDraftDirty(session, discipleDraft);
+    const appliedDraftCount = starterDraftCount + (discipleDirty ? 1 : 0);
 
     if (appliedDraftCount === 0) {
       return {
@@ -241,27 +256,30 @@ export async function buildCharacterPatches(
       };
     }
 
-    if (!snapshot.verified) {
-      return {
-        status: 'BLOCKED',
-        rewrittenClasses: new Map(),
-        appliedDraftCount,
-        appliedPatchCount: 0,
-        blockers: [
-          {
-            field: 'H.p(byte)',
-            message:
-              `Source-backed verification chưa đạt: ${snapshot.verificationDetail}`,
-          },
-        ],
-        diagnostics: [],
-      };
+    const blockers: CharacterPatchBlocker[] = [];
+
+    if (starterDraftCount > 0) {
+      if (!snapshot.verified) {
+        blockers.push({
+          field: 'H.p(byte)',
+          message:
+            `Source-backed verification nhân vật chưa đạt: ${snapshot.verificationDetail}`,
+        });
+      } else {
+        blockers.push(
+          ...validateWritableChanges(profiles, drafts),
+          ...validateRuntimeShape(drafts)
+        );
+      }
     }
 
-    const blockers = [
-      ...validateWritableChanges(profiles, drafts),
-      ...validateRuntimeShape(drafts),
-    ];
+    if (discipleDirty && !discipleSnapshot.verified) {
+      blockers.push({
+        field: 'H.gf()/Đệ tử',
+        message:
+          `Source-backed verification Đệ tử chưa đạt: ${discipleSnapshot.verificationDetail}`,
+      });
+    }
 
     if (blockers.length > 0) {
       return {
@@ -287,25 +305,45 @@ export async function buildCharacterPatches(
       };
     }
 
-    const originalBytes = await entry.async('arraybuffer');
-    const patched = patchCharacterStarterClass(
-      originalBytes,
-      toPatchValues(drafts)
-    );
+    let workingBytes = await entry.async('arraybuffer');
+    let appliedPatchCount = 0;
+    const diagnostics: string[] = [];
+    const rewrittenClasses = new Map<string, ArrayBuffer>();
+
+    if (starterDraftCount > 0) {
+      const patched = patchCharacterStarterClass(
+        workingBytes,
+        toPatchValues(drafts)
+      );
+      workingBytes = patched.bytes;
+      appliedPatchCount += patched.patchCount;
+      diagnostics.push(
+        `H.p(B): ${patched.patchCount} numeric producer đã đổi.`,
+        `H.p(B) code_length delta: ${patched.codeLengthDelta >= 0 ? '+' : ''}${patched.codeLengthDelta}.`,
+        ...patched.diagnostics
+      );
+    }
+
+    if (discipleDirty) {
+      const patched = patchDiscipleDefaultsClass(
+        workingBytes,
+        discipleDraft
+      );
+      workingBytes = patched.classBytes;
+      appliedPatchCount += patched.patchCount;
+      diagnostics.push(...patched.diagnostics);
+      rewrittenClasses.set(getDiscipleHelperClassPath(), patched.helperBytes);
+    }
+
+    rewrittenClasses.set('a/a/H.class', workingBytes);
 
     return {
       status: 'READY',
-      rewrittenClasses: new Map([
-        ['a/a/H.class', patched.bytes],
-      ]),
+      rewrittenClasses,
       appliedDraftCount,
-      appliedPatchCount: patched.patchCount,
+      appliedPatchCount,
       blockers: [],
-      diagnostics: [
-        `H.p(B): ${patched.patchCount} numeric producer đã đổi.`,
-        `code_length delta: ${patched.codeLengthDelta >= 0 ? '+' : ''}${patched.codeLengthDelta}.`,
-        ...patched.diagnostics,
-      ],
+      diagnostics,
     };
   } catch (error) {
     return {

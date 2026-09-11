@@ -35,13 +35,14 @@ import {
   setCharacterDraft,
 } from '../../services/characterDataService';
 import { CharacterSpritePreview } from './CharacterSpritePreview';
+import { DisciplePanel } from './DisciplePanel';
 
 interface CharacterPanelProps {
   session: LoadedJarSession;
   onDraftsUpdated?: (dirtyCount: number) => void;
 }
 
-type CharacterView = 'starter' | 'save';
+type CharacterView = 'starter' | 'disciple' | 'save';
 
 export function CharacterPanel({
   session,
@@ -53,6 +54,7 @@ export function CharacterPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [discipleDirtyCount, setDiscipleDirtyCount] = useState(0);
 
   const load = async () => {
     setLoading(true);
@@ -78,8 +80,10 @@ export function CharacterPanel({
   useEffect(() => {
     if (!snapshot) return;
     void revision;
-    onDraftsUpdatedRef.current?.(getDirtyCharacterCount(session, snapshot.profiles));
-  }, [session, snapshot, revision]);
+    onDraftsUpdatedRef.current?.(
+      getDirtyCharacterCount(session, snapshot.profiles) + discipleDirtyCount
+    );
+  }, [session, snapshot, revision, discipleDirtyCount]);
 
   const selectedProfile = useMemo(() => {
     return snapshot?.profiles.find((profile) => profile.planet === selectedPlanet) ?? null;
@@ -119,12 +123,12 @@ export function CharacterPanel({
     );
   }
 
-  const dirtyCount = getDirtyCharacterCount(session, snapshot.profiles);
+  const dirtyCount = getDirtyCharacterCount(session, snapshot.profiles) + discipleDirtyCount;
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
-      <div className="shrink-0 rounded-2xl border border-zinc-200 bg-white shadow-sm px-4 py-3 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="shrink-0 rounded-2xl border border-zinc-200 bg-white shadow-sm px-3 sm:px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0 w-full sm:w-auto">
           <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-100 to-cyan-100 border border-indigo-200 flex items-center justify-center">
             <UserRound className="w-5 h-5 text-indigo-500" />
           </div>
@@ -149,7 +153,7 @@ export function CharacterPanel({
         </div>
 
         <div
-          className={`shrink-0 flex items-center gap-1.5 text-[10px] font-mono ${
+          className={`self-start sm:self-auto shrink-0 flex items-center gap-1.5 text-[10px] font-mono ${
             snapshot.verified ? 'text-emerald-600' : 'text-amber-600'
           }`}
           title={snapshot.verificationDetail}
@@ -165,12 +169,18 @@ export function CharacterPanel({
         </div>
       </div>
 
-      <div className="shrink-0 flex items-center gap-1 p-1 rounded-xl bg-white border border-zinc-200 shadow-sm w-fit">
+      <div className="shrink-0 flex items-center gap-1 p-1 rounded-xl bg-white border border-zinc-200 shadow-sm w-full sm:w-fit overflow-x-auto">
         <ViewButton
           active={view === 'starter'}
           onClick={() => setView('starter')}
           icon={<Sparkles className="w-3 h-3" />}
           label="Nhân vật khởi tạo"
+        />
+        <ViewButton
+          active={view === 'disciple'}
+          onClick={() => setView('disciple')}
+          icon={<UserRound className="w-3 h-3" />}
+          label="Đệ tử"
         />
         <ViewButton
           active={view === 'save'}
@@ -189,6 +199,11 @@ export function CharacterPanel({
             onSelectPlanet={setSelectedPlanet}
             selectedProfile={selectedProfile}
             onChanged={() => setRevision((value) => value + 1)}
+          />
+        ) : view === 'disciple' ? (
+          <DisciplePanel
+            session={session}
+            onDraftsUpdated={setDiscipleDirtyCount}
           />
         ) : (
           <SaveSchemaView snapshot={snapshot} />
@@ -720,7 +735,7 @@ function ViewButton({
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-1.5 rounded-lg text-[11px] font-medium flex items-center gap-1.5 cursor-pointer ${
+      className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-[11px] font-medium flex items-center gap-1.5 cursor-pointer ${
         active
           ? 'bg-indigo-50 border border-indigo-200 text-indigo-600'
           : 'text-zinc-600 hover:text-zinc-800'
