@@ -11,7 +11,6 @@ import {
   Shield,
   Sparkles,
   Search,
-  Plus,
   Trash2,
   Swords,
   UserRound,
@@ -28,7 +27,12 @@ import {
   resetDiscipleDraft,
   setDiscipleDraft,
 } from '../../services/discipleDataService';
-import { analyzeSkills, SkillRecord } from '../../services/skillDataService';
+import { analyzeSkills, SkillLevelRecord, SkillRecord } from '../../services/skillDataService';
+import {
+  AdvancedMechanicsDraft,
+  getAdvancedMechanicsDraft,
+  setAdvancedMechanicsDraft,
+} from '../../services/advancedMechanicsService';
 
 interface DisciplePanelProps {
   session: LoadedJarSession;
@@ -46,6 +50,21 @@ const GROUP_LABELS: Record<DiscipleFieldGroup, string> = {
   inventory: 'Trang bị & hành trang',
 };
 
+const DISCIPLE_RUNTIME_SKILL_NAMES: Record<number, string> = {
+  0: 'Đấm Dragon',
+  14: 'Đấm Demon',
+  28: 'Đấm Galick',
+  7: 'Kamejoko',
+  21: 'Masenko',
+  35: 'Antomic',
+  42: 'Thái Dương Hạ San',
+  56: 'Tái tạo năng lượng',
+  63: 'Kaioken',
+  91: 'Biến hình',
+  84: 'Đẻ trứng',
+  121: 'Khiên năng lượng',
+};
+
 export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) {
   const [snapshot, setSnapshot] = useState<DiscipleSchemaSnapshot | null>(null);
   const [draft, setDraftState] = useState<DiscipleDraft | null>(null);
@@ -57,7 +76,8 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
   const [skillQuery, setSkillQuery] = useState('');
   const [skillPlanet, setSkillPlanet] = useState<'all' | 0 | 1 | 2>('all');
   const [activeSkillSlot, setActiveSkillSlot] = useState(0);
-  const [visibleSkillSlots, setVisibleSkillSlots] = useState(1);
+  const [visibleSkillSlots, setVisibleSkillSlots] = useState(5);
+  const [advancedMechanics, setAdvancedMechanics] = useState<AdvancedMechanicsDraft>(() => getAdvancedMechanicsDraft(session));
 
   useEffect(() => {
     let active = true;
@@ -70,9 +90,10 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
         const nextDraft = getDiscipleDraft(session, result);
         setSnapshot(result);
         setDraftState(nextDraft);
-        const lastUsed = nextDraft.skills.reduce((last, skill, index) => skill.id >= 0 ? index : last, -1);
-        setVisibleSkillSlots(Math.max(1, lastUsed + 1));
-        setActiveSkillSlot(Math.max(0, Math.min(lastUsed < 0 ? 0 : lastUsed, result.skillSlots - 1)));
+        const lastUsed = nextDraft.skills.slice(0, 5).reduce((last, skill, index) => skill.id >= 0 ? index : last, -1);
+        setVisibleSkillSlots(5);
+        setActiveSkillSlot(Math.max(0, Math.min(lastUsed < 0 ? 0 : lastUsed, 4)));
+        setAdvancedMechanics(getAdvancedMechanicsDraft(session));
         onDraftsUpdated?.(getDirtyDiscipleCount(session));
 
         try {
@@ -107,9 +128,14 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
     return result;
   }, [snapshot]);
 
-  const skillById = useMemo(() => {
-    const map = new Map<number, SkillRecord>();
-    for (const skill of skillCatalog) map.set(skill.id, skill);
+  type ResolvedSkillLevel = { skill: SkillRecord; level: SkillLevelRecord; levelIndex: number };
+  const skillLevelByRuntimeId = useMemo(() => {
+    const map = new Map<number, ResolvedSkillLevel>();
+    for (const skill of skillCatalog) {
+      skill.levels.forEach((level, levelIndex) => {
+        map.set(level.id, { skill, level, levelIndex });
+      });
+    }
     return map;
   }, [skillCatalog]);
 
@@ -121,6 +147,7 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
       return (
         skill.name.toLowerCase().includes(query) ||
         String(skill.id).includes(query) ||
+        skill.levels.some((level) => String(level.id).includes(query)) ||
         skill.damageInfo.toLowerCase().includes(query)
       );
     });
@@ -157,6 +184,11 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
 
   const patch = (value: Partial<DiscipleDraft>) => save({ ...draft, ...value });
 
+  const patchAdvancedMechanics = (value: Partial<AdvancedMechanicsDraft>) => {
+    const next = setAdvancedMechanicsDraft(session, { ...advancedMechanics, ...value });
+    setAdvancedMechanics(next);
+  };
+
   const patchSkill = (index: number, value: Partial<DiscipleDraft['skills'][number]>) => {
     const skills = draft.skills.map((skill, skillIndex) =>
       skillIndex === index ? { ...skill, ...value } : skill
@@ -164,31 +196,34 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
     patch({ skills });
   };
 
-  const assignSkillToSlot = (slotIndex: number, skillId: number) => {
-    const nextLevel = skillId < 0 ? 0 : Math.max(1, draft.skills[slotIndex]?.level || 1);
-    patchSkill(slotIndex, { id: skillId, level: nextLevel });
-    setActiveSkillSlot(slotIndex);
-    setVisibleSkillSlots((current) => Math.max(current, slotIndex + 1));
+  const assignSkillToSlot = (slotIndex: number, catalogSkill: SkillRecord | null, levelIndex = 0) => {
+    if (!catalogSkill) {
+      patchSkill(slotIndex, { id: -1, level: 0 });
+    } else {
+      const runtimeLevel = catalogSkill.levels[levelIndex] ?? catalogSkill.levels[0];
+      if (!runtimeLevel) return;
+      patchSkill(slotIndex, { id: runtimeLevel.id, level: runtimeLevel.point });
+    }
+    setActiveSkillSlot(Math.min(slotIndex, 4));
+    setVisibleSkillSlots(5);
   };
 
-  const addSkillSlot = () => {
-    if (visibleSkillSlots >= snapshot.skillSlots) return;
-    const nextSlot = visibleSkillSlots;
-    setVisibleSkillSlots(nextSlot + 1);
-    setActiveSkillSlot(nextSlot);
+  const changeSkillLevel = (slotIndex: number, levelIndex: number) => {
+    const resolved = skillLevelByRuntimeId.get(draft.skills[slotIndex]?.id ?? -1);
+    if (!resolved) return;
+    const runtimeLevel = resolved.skill.levels[levelIndex];
+    if (!runtimeLevel) return;
+    patchSkill(slotIndex, { id: runtimeLevel.id, level: runtimeLevel.point });
   };
+
 
   const removeSkillSlot = (slotIndex: number) => {
     const skills = draft.skills.map((skill, index) =>
       index === slotIndex ? { id: -1, level: 0 } : skill
     );
     patch({ skills });
-    if (slotIndex === visibleSkillSlots - 1 && visibleSkillSlots > 1) {
-      let nextVisible = visibleSkillSlots - 1;
-      while (nextVisible > 1 && skills[nextVisible - 1]?.id < 0) nextVisible--;
-      setVisibleSkillSlots(nextVisible);
-      setActiveSkillSlot(Math.min(activeSkillSlot, nextVisible - 1));
-    }
+    setVisibleSkillSlots(5);
+    setActiveSkillSlot(Math.min(activeSkillSlot, 4));
   };
 
   const reset = () => {
@@ -202,7 +237,7 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
     patch({
       skills: Array.from({ length: snapshot.skillSlots }, () => ({ id: -1, level: 0 })),
     });
-    setVisibleSkillSlots(1);
+    setVisibleSkillSlots(5);
     setActiveSkillSlot(0);
   };
 
@@ -237,7 +272,7 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
             </div>
             <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap scrollbar-none touch-auto">
               <Chip text="RNG verified" />
-              <Chip text={`${snapshot.skillSlots} skill`} />
+              <Chip text="5 slot skill runtime" />
               <Chip text={`${snapshot.equipmentSlots} trang bị`} />
               <Chip text="save a/a/N giữ nguyên" />
             </div>
@@ -305,7 +340,15 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
 
       <div className="min-w-0 pb-2 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1">
         {view === 'logic' ? (
-          <LogicView snapshot={snapshot} />
+          <LogicView
+            snapshot={snapshot}
+            advanced={advancedMechanics}
+            resolveSkillName={(runtimeId) => {
+              const name = skillLevelByRuntimeId.get(runtimeId)?.skill.name || DISCIPLE_RUNTIME_SKILL_NAMES[runtimeId] || 'Kỹ năng chưa nhận diện';
+              return name.replace(/^Chiêu\s+/i, '');
+            }}
+            onPatchAdvanced={patchAdvancedMechanics}
+          />
         ) : view === 'stats' ? (
           <div className="space-y-3">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
@@ -384,37 +427,33 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
                 <div className="px-3 sm:px-4 py-3 border-b border-zinc-200 flex flex-col gap-3">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
-                      <div className="text-sm font-bold text-zinc-900">Ô kỹ năng Đệ tử</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">cV = ID kỹ năng · cW = cấp kỹ năng · tối đa {snapshot.skillSlots} slot thật</div>
+                      <div className="text-sm font-bold text-zinc-900">5 ô kỹ năng runtime của Đệ tử</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">
+                        Game dựng đúng <strong>5 slot chiến đấu</strong>. Save cV/cW có 7 phần tử nhưng 2 phần tử cuối không được runtime đưa vào thanh skill gốc.
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={addSkillSlot}
-                        disabled={visibleSkillSlots >= snapshot.skillSlots}
-                        className="h-9 px-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 border border-cyan-600 text-white disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Thêm ô ({visibleSkillSlots}/{snapshot.skillSlots})
-                      </button>
-                      <button type="button" onClick={clearSkills} className="h-9 px-3 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] text-zinc-700 cursor-pointer disabled:cursor-not-allowed">
-                        Xóa tất cả
-                      </button>
-                    </div>
+                    <button type="button" onClick={clearSkills} className="h-9 px-3 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] text-zinc-700 cursor-pointer disabled:cursor-not-allowed">
+                      Xóa cả 5 skill
+                    </button>
                   </div>
-                  {visibleSkillSlots >= snapshot.skillSlots && (
-                    <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
-                      Đã dùng đủ {snapshot.skillSlots} slot thật của cV/cW. Panel không tạo slot giả vượt giới hạn runtime.
-                    </div>
-                  )}
+                  <div className="text-[10px] text-cyan-800 bg-cyan-50 border border-cyan-200 rounded-lg px-2.5 py-2">
+                    Slot 5 có tồn tại trong runtime nhưng game gốc khóa tự mở. Tab <strong>Logic thật</strong> bên cạnh cho phép bật Slot 5 và đặt ngưỡng sức mạnh.
+                  </div>
                 </div>
 
                 <div className="p-3 sm:p-4 grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3">
                   {draft.skills.slice(0, visibleSkillSlots).map((skill, index) => {
-                    const meta = skillById.get(skill.id);
-                    const duplicateSlots = draft.skills
-                      .map((candidate, candidateIndex) => candidate.id === skill.id && skill.id >= 0 && candidateIndex !== index ? candidateIndex + 1 : null)
-                      .filter((value): value is number => value !== null);
+                    const resolved = skillLevelByRuntimeId.get(skill.id);
+                    const parentSkill = resolved?.skill;
+                    const duplicateSlots = parentSkill
+                      ? draft.skills
+                          .map((candidate, candidateIndex) => {
+                            if (candidateIndex === index || candidate.id < 0) return null;
+                            const candidateResolved = skillLevelByRuntimeId.get(candidate.id);
+                            return candidateResolved?.skill.rowIndex === parentSkill.rowIndex ? candidateIndex + 1 : null;
+                          })
+                          .filter((value): value is number => value !== null)
+                      : [];
                     return (
                       <div
                         key={index}
@@ -446,27 +485,48 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
                         <label className="block space-y-1.5">
                           <span className="text-[9px] uppercase text-zinc-500 font-mono">Kỹ năng</span>
                           <select
-                            value={skill.id}
+                            value={parentSkill?.rowIndex ?? -1}
                             onClick={(event) => event.stopPropagation()}
-                            onChange={(event) => assignSkillToSlot(index, Number(event.target.value))}
+                            onChange={(event) => {
+                              const rowIndex = Number(event.target.value);
+                              assignSkillToSlot(index, rowIndex < 0 ? null : (skillCatalog.find((entry) => entry.rowIndex === rowIndex) ?? null), 0);
+                            }}
                             className="w-full min-h-11 bg-white border border-zinc-300 rounded-xl px-3 py-2 text-[14px] sm:text-[13px] text-zinc-900 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                           >
                             <option value={-1}>— Chưa gán skill —</option>
-                            {skillCatalog.map((catalogSkill) => (
-                              <option key={`${catalogSkill.rowIndex}-${catalogSkill.id}`} value={catalogSkill.id}>
-                                #{catalogSkill.id} · {catalogSkill.name} · {planetLabel(catalogSkill.nclassId)}
-                              </option>
-                            ))}
+                            {skillCatalog.map((catalogSkill) => {
+                              return (
+                                <option key={`${catalogSkill.rowIndex}-${catalogSkill.id}`} value={catalogSkill.rowIndex}>
+                                  {catalogSkill.name} · {planetLabel(catalogSkill.nclassId)}
+                                </option>
+                              );
+                            })}
                           </select>
                         </label>
 
-                        <div className="mt-2 grid grid-cols-1 min-[420px]:grid-cols-[minmax(0,1fr)_120px] gap-2">
+                        <div className="mt-2 grid grid-cols-1 min-[420px]:grid-cols-[minmax(0,1fr)_150px] gap-2">
                           <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 min-w-0">
-                            <div className="text-[9px] text-zinc-500 font-mono">Đang gán</div>
-                            <div className="text-[12px] font-bold text-zinc-900 truncate mt-0.5">{meta?.name ?? (skill.id >= 0 ? `Skill #${skill.id}` : 'Trống')}</div>
-                            {meta && <div className="text-[9px] text-zinc-500 mt-0.5 truncate">ID {meta.id} · {planetLabel(meta.nclassId)} · max {meta.maxPoint}</div>}
+                            <div className="text-[9px] text-zinc-500 font-mono">Runtime đang gán</div>
+                            <div className="text-[12px] font-bold text-zinc-900 truncate mt-0.5">{parentSkill?.name ?? (skill.id >= 0 ? 'Kỹ năng chưa resolve tên' : 'Trống')}</div>
+                            {resolved && <div className="text-[9px] text-zinc-500 mt-0.5 truncate">Cấp {resolved.level.point} · {planetLabel(resolved.skill.nclassId)}</div>}
                           </div>
-                          <NumberEditor compact label="Cấp" technical="LV" value={skill.level} min={0} max={10_000} onChange={(level) => patchSkill(index, { level })} />
+                          {resolved ? (
+                            <label className="block space-y-1.5">
+                              <span className="text-[9px] uppercase text-zinc-500 font-mono">Cấp skill</span>
+                              <select
+                                value={resolved.levelIndex}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => changeSkillLevel(index, Number(event.target.value))}
+                                className="w-full min-h-11 bg-white border border-zinc-300 rounded-xl px-2.5 py-2 text-[13px] text-zinc-900 focus:outline-none focus:border-cyan-500"
+                              >
+                                {resolved.skill.levels.map((level, levelIndex) => (
+                                  <option key={level.id} value={levelIndex}>Cấp {level.point}</option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : (
+                            <NumberEditor compact label="Cấp raw" technical="cW" value={skill.level} min={0} max={10_000} onChange={(level) => patchSkill(index, { level })} />
+                          )}
                         </div>
 
                         {duplicateSlots.length > 0 && (
@@ -493,7 +553,7 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
                         type="search"
                         value={skillQuery}
                         onChange={(event) => setSkillQuery(event.target.value)}
-                        placeholder="Tìm tên hoặc ID skill..."
+                        placeholder="Tìm theo tên kỹ năng..."
                         className="w-full min-h-11 pl-9 pr-3 rounded-xl border border-zinc-300 bg-white text-[16px] sm:text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                       />
                     </div>
@@ -516,14 +576,14 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
                   <div className="p-3 sm:p-4 grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-2">
                     {filteredSkillCatalog.map((catalogSkill) => {
                       const usedAt = draft.skills
-                        .map((skill, index) => skill.id === catalogSkill.id ? index + 1 : null)
+                        .map((slotSkill, index) => skillLevelByRuntimeId.get(slotSkill.id)?.skill.rowIndex === catalogSkill.rowIndex ? index + 1 : null)
                         .filter((value): value is number => value !== null);
                       return (
                         <div key={`${catalogSkill.rowIndex}-${catalogSkill.id}`} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 min-w-0">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="text-[12px] font-bold text-zinc-900 truncate" title={catalogSkill.name}>{catalogSkill.name}</div>
-                              <div className="text-[9px] text-zinc-500 font-mono mt-0.5">ID {catalogSkill.id} · {planetLabel(catalogSkill.nclassId)}</div>
+                              <div className="text-[9px] text-zinc-500 font-mono mt-0.5">Template {catalogSkill.id} · runtime {catalogSkill.levels[0]?.id ?? '?'}–{catalogSkill.levels[catalogSkill.levels.length - 1]?.id ?? '?'} · {planetLabel(catalogSkill.nclassId)}</div>
                             </div>
                             <span className="shrink-0 px-1.5 py-0.5 rounded bg-white border border-zinc-200 text-[9px] text-zinc-600 font-mono">max {catalogSkill.maxPoint}</span>
                           </div>
@@ -534,7 +594,7 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
                             </div>
                             <button
                               type="button"
-                              onClick={() => assignSkillToSlot(activeSkillSlot, catalogSkill.id)}
+                              onClick={() => assignSkillToSlot(activeSkillSlot, catalogSkill, 0)}
                               className="shrink-0 h-8 px-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold cursor-pointer"
                             >
                               Gán → Slot {activeSkillSlot + 1}
@@ -556,7 +616,81 @@ export function DisciplePanel({ session, onDraftsUpdated }: DisciplePanelProps) 
   );
 }
 
-function LogicView({ snapshot }: { snapshot: DiscipleSchemaSnapshot }) {
+function LogicView({
+  snapshot,
+  advanced,
+  resolveSkillName,
+  onPatchAdvanced,
+}: {
+  snapshot: DiscipleSchemaSnapshot;
+  advanced: AdvancedMechanicsDraft;
+  resolveSkillName: (runtimeId: number) => string;
+  onPatchAdvanced: (value: Partial<AdvancedMechanicsDraft>) => void;
+}) {
+  const pools = [
+    {
+      slot: 1,
+      title: 'Slot 1 · Có ngay khi nhận Đệ tử',
+      note: 'Skill đầu được random ngay trong flow tạo Đệ tử.',
+      ids: [0, 14, 28],
+      rateRow: 0,
+      thresholdIndex: -1,
+      enabled: true,
+    },
+    {
+      slot: 2,
+      title: 'Slot 2',
+      note: 'Tự mở khi Đệ tử đạt ngưỡng sức mạnh.',
+      ids: [7, 21, 35],
+      rateRow: 1,
+      thresholdIndex: 0,
+      enabled: true,
+    },
+    {
+      slot: 3,
+      title: 'Slot 3',
+      note: 'Tự mở khi Đệ tử đạt ngưỡng sức mạnh.',
+      ids: [42, 56, 63],
+      rateRow: 2,
+      thresholdIndex: 1,
+      enabled: true,
+    },
+    {
+      slot: 4,
+      title: 'Slot 4',
+      note: 'Tự mở khi Đệ tử đạt ngưỡng sức mạnh.',
+      ids: [91, 84, 121],
+      rateRow: 3,
+      thresholdIndex: 2,
+      enabled: true,
+    },
+    {
+      slot: 5,
+      title: 'Slot 5',
+      note: 'Game gốc có ô này nhưng khóa tự mở. Khi bật writer, Slot 5 dùng cùng pool random của Slot 4.',
+      ids: [91, 84, 121],
+      rateRow: 3,
+      thresholdIndex: 3,
+      enabled: advanced.discipleSlot5UnlockEnabled,
+    },
+  ] as const;
+
+  const updateThreshold = (index: number, value: number) => {
+    if (index === 3) {
+      onPatchAdvanced({ discipleSlot5UnlockPower: Math.max(1, Math.round(value || 1)) });
+      return;
+    }
+    const next = [...advanced.discipleUnlockThresholds];
+    next[index] = Math.max(1, Math.round(value || 1));
+    onPatchAdvanced({ discipleUnlockThresholds: next });
+  };
+
+  const updateRate = (row: number, column: number, value: number) => {
+    const next = advanced.discipleSkillRates.map((rates) => [...rates]);
+    next[row][column] = Math.max(0, Math.min(100, Math.round((value || 0) * 100) / 100));
+    onPatchAdvanced({ discipleSkillRates: next });
+  };
+
   return (
     <div className="space-y-3">
       <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-3 sm:p-4">
@@ -587,26 +721,108 @@ function LogicView({ snapshot }: { snapshot: DiscipleSchemaSnapshot }) {
 
       <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
         <div className="px-3 sm:px-4 py-3 border-b border-zinc-200 bg-zinc-50">
-          <div className="text-sm font-bold text-zinc-900">Random mở kỹ năng theo sức mạnh</div>
-          <div className="text-[10px] text-zinc-500 mt-0.5">Method h(H) gọi bộ chọn J(slot) khi slot còn trống.</div>
+          <div className="text-sm font-bold text-zinc-900">5 slot kỹ năng Đệ tử</div>
+          <div className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed">
+            Tên chiêu được resolve từ bảng skill thật <code>a/a/a/W.u</code>. Ngưỡng bên dưới là writer-backed: sửa xong Chạy thử/Xuất JAR sẽ patch logic <code>h(H)</code>.
+          </div>
         </div>
+
         <div className="divide-y divide-zinc-100">
-          {snapshot.skillUnlocks.map((rule) => (
-            <div key={rule.slot} className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-              <div className="sm:w-44 shrink-0">
-                <div className="text-xs font-bold text-zinc-900">Slot {rule.slot + 1}</div>
-                <div className="text-[10px] text-zinc-500">Power ≥ {rule.power.toLocaleString('vi-VN')}</div>
+          {pools.map((pool) => {
+            const threshold = pool.thresholdIndex < 0
+              ? null
+              : pool.thresholdIndex === 3
+                ? advanced.discipleSlot5UnlockPower
+                : advanced.discipleUnlockThresholds[pool.thresholdIndex];
+            const rates = advanced.discipleSkillRates[pool.rateRow] ?? [0, 0, 0];
+            const total = rates.reduce((sum, rate) => sum + Number(rate || 0), 0);
+            const totalOk = Math.abs(total - 100) < 0.011;
+
+            return (
+              <div key={pool.slot} className={`p-3 sm:p-4 space-y-3 ${pool.slot === 5 && !pool.enabled ? 'bg-amber-50/50' : ''}`}>
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="text-xs font-bold text-zinc-900">{pool.title}</div>
+                      {pool.slot === 5 && (
+                        <span className={`px-2 py-0.5 rounded-full border text-[9px] font-bold ${pool.enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                          {pool.enabled ? 'ĐÃ MỞ BẰNG WRITER' : 'GAME GỐC ĐANG KHÓA'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 mt-1">{pool.note}</div>
+                  </div>
+
+                  {pool.slot === 5 ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={advanced.discipleSlot5UnlockEnabled}
+                      onClick={() => onPatchAdvanced({ discipleSlot5UnlockEnabled: !advanced.discipleSlot5UnlockEnabled })}
+                      className={`min-h-10 px-3 rounded-xl border text-[11px] font-bold cursor-pointer ${advanced.discipleSlot5UnlockEnabled ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-amber-300 text-amber-700'}`}
+                    >
+                      {advanced.discipleSlot5UnlockEnabled ? 'Tắt tự mở Slot 5' : 'Bật tự mở Slot 5'}
+                    </button>
+                  ) : null}
+                </div>
+
+                {threshold !== null && (pool.slot !== 5 || pool.enabled) && (
+                  <label className="block">
+                    <span className="text-[9px] uppercase tracking-wide text-zinc-500 font-semibold">Sức mạnh cần để mở {pool.title.split('·')[0].trim()}</span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={1_000_000_000_000}
+                      value={threshold}
+                      onChange={(event) => updateThreshold(pool.thresholdIndex, Number(event.target.value))}
+                      className="mt-1 w-full sm:max-w-xs min-h-11 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-[16px] sm:text-sm font-mono text-zinc-900 focus:outline-none focus:border-violet-400"
+                    />
+                    <div className="mt-1 text-[10px] text-zinc-500">Hiện tại: {threshold.toLocaleString('vi-VN')} sức mạnh</div>
+                  </label>
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px] font-semibold text-zinc-700">Random gồm các chiêu</div>
+                    <div className={`text-[10px] font-bold ${totalOk ? 'text-emerald-600' : 'text-red-600'}`}>Tổng {Number(total.toFixed(2))}%</div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {pool.ids.map((runtimeId, column) => (
+                      <div key={`${pool.slot}-${runtimeId}`} className="rounded-xl border border-violet-200 bg-violet-50 p-2.5">
+                        <div className="text-[11px] font-bold text-violet-900 min-h-[32px] leading-snug">
+                          {resolveSkillName(runtimeId)}
+                        </div>
+                        <label className="mt-2 flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={rates[column] ?? 0}
+                            onChange={(event) => updateRate(pool.rateRow, column, Number(event.target.value))}
+                            className="w-full min-h-10 rounded-lg border border-violet-200 bg-white px-2.5 py-2 text-[16px] sm:text-xs font-mono focus:outline-none focus:border-violet-400"
+                          />
+                          <span className="text-[10px] font-bold text-violet-700">%</span>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  {pool.slot === 5 && pool.enabled && (
+                    <div className="mt-2 text-[10px] text-amber-700">
+                      Slot 5 đang dùng cùng pool/tỷ lệ với Slot 4 vì <code>J(slot)</code> của JAR gốc gom các slot cuối vào cùng nhánh. Muốn Slot 5 có bộ 3 chiêu riêng cần writer J(slot) mở rộng thêm một tier riêng.
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {rule.choices.map((choice) => (
-                  <span key={choice.id} className="px-2 py-1 rounded-lg bg-violet-50 border border-violet-200 text-[10px] text-violet-700 font-mono">
-                    ID {choice.id} · {choice.chance}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-3 text-[10px] text-cyan-900 leading-relaxed">
+        <strong>Về “thêm slot”:</strong> runtime gốc tạo <code>a/aK[5]</code>, nên 5 slot trên là 5 ô chiến đấu thật.
+        Save có <code>cV/cW[7]</code>, nhưng Slot 6–7 chưa được runtime đưa ra thanh skill. Tôi không hiển thị chúng như slot dùng được để tránh panel báo sai.
       </div>
 
       <NoteList title="TNSM / sức mạnh Đệ tử" notes={snapshot.rewardNotes} tone="amber" />

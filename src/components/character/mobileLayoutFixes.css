@@ -116,7 +116,8 @@ body,
 
   .nro-character-panel,
   .nro-disciple-panel,
-  .nro-starter-editor {
+  .nro-starter-editor,
+  .nro-mechanics-panel {
     width: 100% !important;
     min-width: 0 !important;
     max-width: 100% !important;

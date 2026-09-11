@@ -54,22 +54,22 @@ const DISCIPLE_SKILL_GROUPS = [
   {
     title: 'Skill đầu khi nhận Đệ tử',
     note: 'Game gốc w(3): 3 nhánh ngang nhau.',
-    labels: ['Đấm Dragon · #0', 'Đấm Demon · #14', 'Đấm Galick · #28'],
+    labels: ['Đấm Dragon', 'Đấm Demon', 'Đấm Galick'],
   },
   {
     title: 'Mốc 150 triệu sức mạnh',
     note: 'Slot kỹ năng tiếp theo.',
-    labels: ['Skill #7', 'Skill #21', 'Skill #35'],
+    labels: ['Kamejoko', 'Masenko', 'Antomic'],
   },
   {
     title: 'Mốc 1,5 tỷ sức mạnh',
     note: 'Slot kỹ năng tiếp theo.',
-    labels: ['Skill #42', 'Skill #56', 'Skill #63'],
+    labels: ['Thái Dương Hạ San', 'Tái tạo năng lượng', 'Kaioken'],
   },
   {
     title: 'Mốc 20 tỷ sức mạnh',
     note: 'Slot kỹ năng tiếp theo.',
-    labels: ['Skill #91', 'Skill #84', 'Skill #121'],
+    labels: ['Biến hình', 'Đẻ trứng', 'Khiên năng lượng'],
   },
 ] as const;
 
@@ -105,7 +105,9 @@ export function GameMechanicsPanel({ session, onDraftsUpdated }: GameMechanicsPa
       setSnapshot(mechanicsSnapshot);
       if (skillSnapshot) {
         const names: Record<number, string> = {};
-        for (const skill of skillSnapshot.skills) names[skill.id] = skill.name;
+        for (const skill of skillSnapshot.skills) {
+          for (const level of skill.levels) names[level.id] = skill.name;
+        }
         setSkillNames(names);
       } else {
         setSkillNames({});
@@ -181,7 +183,7 @@ export function GameMechanicsPanel({ session, onDraftsUpdated }: GameMechanicsPa
   }
 
   return (
-    <div className="w-full min-w-0 max-w-full space-y-3 pb-24 md:pb-4 overflow-x-hidden">
+    <div className="nro-mechanics-panel w-full min-w-0 max-w-full space-y-3 pb-24 md:pb-4 overflow-x-hidden">
       <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-3 sm:p-4 space-y-3 min-w-0">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 min-w-0">
           <div className="min-w-0">
@@ -287,7 +289,7 @@ function AdvancedMechanicsView({
           </button>
         }
       >
-        <div className="grid grid-cols-1 sm:grid-cols-[180px_minmax(0,1fr)] gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)] gap-3 min-w-0">
           <NumberField
             label="Phí mỗi lượt (Ngọc)"
             value={advanced.godWheelCost}
@@ -296,56 +298,56 @@ function AdvancedMechanicsView({
             disabled={!advanced.godWheelEnabled}
             onChange={(value) => onChange({ godWheelCost: Math.max(0, Math.round(value)) })}
           />
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-            {advanced.godWheelRates.map((rate, index) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 min-w-0">
+            {(advanced.godWheelRates || []).map((rate, index) => (
               <div key={index} className="rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 min-w-0">
                 <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Phần thưởng {index + 1}</div>
-                <div className="grid grid-cols-2 gap-2 mt-2">
+                <div className="grid grid-cols-2 gap-2 mt-2 min-w-0">
                   <NumberField compact label="Tỷ lệ %" value={rate} min={0} max={100} step={1} disabled={!advanced.godWheelEnabled} onChange={(value) => updateWheelRate(index, value)} />
-                  <NumberField compact label="Ngọc nhận" value={advanced.godWheelRewards[index]} min={0} step={1} disabled={!advanced.godWheelEnabled} onChange={(value) => updateWheelReward(index, value)} />
+                  <NumberField compact label="Ngọc nhận" value={advanced.godWheelRewards?.[index] ?? 0} min={0} step={1} disabled={!advanced.godWheelEnabled} onChange={(value) => updateWheelReward(index, value)} />
                 </div>
               </div>
             ))}
           </div>
         </div>
-        <TotalRate total={sum(advanced.godWheelRates)} enabled={advanced.godWheelEnabled} />
+        <TotalRate total={sum(advanced.godWheelRates || [])} enabled={advanced.godWheelEnabled} />
       </Section>
 
       <Section icon={<Sparkles className="w-4 h-4 text-amber-500" />} title="Đập đồ" subtitle="Tỷ lệ thành công theo cấp nâng hiện tại (+0 → +8).">
-        <RateGrid values={advanced.gearUpgradeRates} defaults={ADVANCED_DEFAULTS.gearUpgradeRates} onChange={(index, value) => updateUpgrade('gearUpgradeRates', index, value)} prefix="+" />
+        <RateGrid values={advanced.gearUpgradeRates || []} defaults={ADVANCED_DEFAULTS.gearUpgradeRates} onChange={(index, value) => updateUpgrade('gearUpgradeRates', index, value)} prefix="+" />
       </Section>
 
       <Section icon={<Star className="w-4 h-4 text-sky-500" />} title="Đập đồ sao" subtitle="Tỷ lệ đập sao / option 107 theo số sao hiện tại.">
-        <RateGrid values={advanced.crystalUpgradeRates} defaults={ADVANCED_DEFAULTS.crystalUpgradeRates} onChange={(index, value) => updateUpgrade('crystalUpgradeRates', index, value)} prefix="★" />
+        <RateGrid values={advanced.crystalUpgradeRates || []} defaults={ADVANCED_DEFAULTS.crystalUpgradeRates} onChange={(index, value) => updateUpgrade('crystalUpgradeRates', index, value)} prefix="★" />
       </Section>
 
       <Section icon={<Dices className="w-4 h-4 text-violet-600" />} title="Tỷ lệ ra skill Đệ tử" subtitle="Chỉnh trực tiếp nhánh RNG Đấm Dragon / Demon / Galick và 3 mốc sức mạnh.">
-        <div className="space-y-2.5">
-          {DISCIPLE_SKILL_GROUPS.map((group, row) => {
-            const rates = advanced.discipleSkillRates[row];
+        <div className="space-y-2.5 min-w-0">
+          {(DISCIPLE_SKILL_GROUPS || []).map((group, row) => {
+            const rates = advanced.discipleSkillRates?.[row] ?? [33, 33, 34];
             const total = sum(rates);
             const ok = Math.abs(total - 100) < 0.011;
             return (
               <div key={group.title} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 min-w-0">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-sm font-bold text-zinc-900">{group.title}</div>
                     <div className="text-[10px] text-zinc-500">{group.note}</div>
                   </div>
-                  <span className={`text-[10px] font-bold ${ok ? 'text-emerald-600' : 'text-red-600'}`}>Tổng {Number(total.toFixed(2))}%</span>
+                  <span className={`text-[10px] font-bold shrink-0 ${ok ? 'text-emerald-600' : 'text-red-600'}`}>Tổng {Number(total.toFixed(2))}%</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 min-w-0">
                   {([
                     [0, 14, 28],
                     [7, 21, 35],
                     [42, 56, 63],
                     [91, 84, 121],
-                  ][row]).map((skillId, column) => {
+                  ][row] || []).map((skillId, column) => {
                     const fallback = group.labels[column];
                     const resolved = skillNames[skillId];
-                    const label = resolved ? `${resolved} · #${skillId}` : fallback;
+                    const label = resolved ? resolved.replace(/^Chiêu\s+/i, '') : fallback;
                     return (
-                      <NumberField key={skillId} label={label} value={rates[column]} min={0} max={100} step={1} suffix="%" onChange={(value) => updateDisciple(row, column, value)} />
+                      <NumberField key={skillId} label={label} value={rates[column] ?? 0} min={0} max={100} step={1} suffix="%" onChange={(value) => updateDisciple(row, column, value)} />
                     );
                   })}
                 </div>
@@ -354,7 +356,7 @@ function AdvancedMechanicsView({
           })}
         </div>
         <div className="mt-3 flex justify-end">
-          <button type="button" onClick={onReset} className="px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+          <button type="button" onClick={onReset} className="px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer hover:bg-zinc-50">
             <RotateCcw className="w-3.5 h-3.5" />Khôi phục tỷ lệ RNG gốc
           </button>
         </div>
@@ -365,12 +367,12 @@ function AdvancedMechanicsView({
 
 function RateGrid({ values, defaults, onChange, prefix }: { values: number[]; defaults: number[]; onChange: (index: number, value: number) => void; prefix: string }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-9 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-2 min-w-0 w-full">
       {values.map((value, index) => (
-        <div key={index} className="rounded-xl border border-zinc-200 bg-zinc-50 p-2.5">
-          <div className="flex items-center justify-between gap-1 mb-1.5">
+        <div key={index} className="rounded-xl border border-zinc-200 bg-zinc-50 p-2 sm:p-2.5 min-w-0 flex flex-col justify-between">
+          <div className="flex items-center justify-between gap-1 mb-1.5 min-w-0">
             <span className="text-xs font-bold text-zinc-800">{prefix}{index}</span>
-            <span className="text-[9px] text-zinc-400 font-mono">gốc {pct(defaults[index])}</span>
+            <span className="text-[9px] text-zinc-400 font-mono truncate">gốc {pct(defaults[index] ?? 0)}</span>
           </div>
           <NumberField compact label="Thành công" value={value} min={0} max={100} step={1} suffix="%" onChange={(next) => onChange(index, next)} />
         </div>
@@ -415,16 +417,43 @@ function DropView({
         {(draft.customMobDrops ?? []).length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-center text-xs text-zinc-500">Chưa có drop custom.</div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {(draft.customMobDrops ?? []).map((rule, index) => (
-              <div key={rule.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-2 items-end">
-                <NumberField label="Item ID" value={rule.itemId} min={0} step={1} onChange={(value) => updateCustom(rule.id, { itemId: Math.max(0, Math.round(value)) })} />
-                <NumberField label="Số lượng" value={rule.quantity} min={1} step={1} onChange={(value) => updateCustom(rule.id, { quantity: normalizeQuantity(value) })} />
-                <NumberField label="Tỷ lệ %" value={rule.chancePercent} min={0} max={100} step={0.1} onChange={(value) => updateCustom(rule.id, { chancePercent: normalizeChance(value) })} />
-                <NullableNumberField label="Mob type" value={rule.mobType} onChange={(value) => updateCustom(rule.id, { mobType: value })} />
-                <NullableNumberField label="Map ID" value={rule.mapId} onChange={(value) => updateCustom(rule.id, { mapId: value })} />
-                <button type="button" onClick={() => updateCustom(rule.id, { enabled: !rule.enabled })} className={`h-11 rounded-xl border text-xs font-bold ${rule.enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-zinc-200 text-zinc-500'}`}>{rule.enabled ? 'BẬT' : 'TẮT'}</button>
-                <button type="button" onClick={() => deleteCustom(rule.id)} className="h-11 rounded-xl border border-red-200 bg-red-50 text-red-600 text-xs font-bold flex items-center justify-center gap-1"><Trash2 className="w-3.5 h-3.5" />Xóa #{index + 1}</button>
+              <div key={rule.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 min-w-0 space-y-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-zinc-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-zinc-900 font-mono">Drop #{index + 1}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${rule.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-200 text-zinc-600'}`}>
+                      {rule.enabled ? 'Đang bật' : 'Đang tắt'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => updateCustom(rule.id, { enabled: !rule.enabled })}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
+                        rule.enabled ? 'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-100' : 'bg-emerald-600 border-emerald-600 text-white'
+                      }`}
+                    >
+                      {rule.enabled ? 'Tắt drop' : 'Bật drop'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteCustom(rule.id)}
+                      className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Xóa</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 min-w-0">
+                  <NumberField label="Item ID" value={rule.itemId} min={0} step={1} onChange={(value) => updateCustom(rule.id, { itemId: Math.max(0, Math.round(value)) })} />
+                  <NumberField label="Số lượng" value={rule.quantity} min={1} step={1} onChange={(value) => updateCustom(rule.id, { quantity: normalizeQuantity(value) })} />
+                  <NumberField label="Tỷ lệ %" value={rule.chancePercent} min={0} max={100} step={0.1} suffix="%" onChange={(value) => updateCustom(rule.id, { chancePercent: normalizeChance(value) })} />
+                  <NullableNumberField label="Mob type (trống = tất cả)" value={rule.mobType} onChange={(value) => updateCustom(rule.id, { mobType: value })} />
+                  <NullableNumberField label="Map ID (trống = tất cả)" value={rule.mapId} onChange={(value) => updateCustom(rule.id, { mapId: value })} />
+                </div>
               </div>
             ))}
           </div>
@@ -562,65 +591,6 @@ function CoreView({
           <input type="checkbox" checked={draft.tnsmLevelLimitEnabled} onChange={(e) => setDraft((current) => ({ ...current, tnsmLevelLimitEnabled: e.target.checked }))} className="w-4 h-4" />
           <div><div className="text-xs font-bold text-zinc-800">Giữ giới hạn TNSM theo chênh level</div><div className="text-[10px] text-zinc-500">Tắt để bỏ penalty level trong tm$reward. Tính năng cũ được giữ nguyên.</div></div>
         </label>
-      </Section>
-
-      <Section
-        icon={<PackageSearch className="w-4 h-4 text-emerald-600" />}
-        title="Item #521 · Tự động luyện tập"
-        subtitle="Vá item auto thành buff có thời hạn; khi nhiệm vụ hiện tại có mục tiêu quái đã xác minh, auto ưu tiên đúng loại quái đó."
-        right={
-          <button
-            type="button"
-            onClick={() => onAdvancedChange({ autoTrainingPatchEnabled: !advanced.autoTrainingPatchEnabled })}
-            className={`px-3 py-2 rounded-xl border text-xs font-bold ${advanced.autoTrainingPatchEnabled ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-zinc-300 text-zinc-700'}`}
-          >
-            {advanced.autoTrainingPatchEnabled ? 'ĐANG VÁ ITEM #521' : 'BẬT VÁ AUTO'}
-          </button>
-        }
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-            <NumberField
-              label="Thời hạn mỗi lần bật (phút)"
-              value={advanced.autoTrainingDurationMinutes}
-              min={1}
-              max={10080}
-              step={1}
-              disabled={!advanced.autoTrainingPatchEnabled}
-              onChange={(value) => onAdvancedChange({ autoTrainingDurationMinutes: Math.max(1, Math.min(10080, Math.round(value || 1))) })}
-            />
-            <div className="mt-2 flex gap-1.5 flex-wrap">
-              {[30, 60, 120, 300, 1440].map((minutes) => (
-                <button
-                  key={minutes}
-                  type="button"
-                  disabled={!advanced.autoTrainingPatchEnabled}
-                  onClick={() => onAdvancedChange({ autoTrainingDurationMinutes: minutes })}
-                  className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold disabled:opacity-40 ${advanced.autoTrainingDurationMinutes === minutes ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-zinc-200 text-zinc-600'}`}
-                >
-                  {minutes < 60 ? `${minutes}p` : minutes === 1440 ? '24h' : `${minutes / 60}h`}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label className={`rounded-xl border p-3 flex items-start gap-2 ${advanced.autoTrainingPatchEnabled ? 'border-emerald-200 bg-emerald-50/60 cursor-pointer' : 'border-zinc-200 bg-zinc-50 opacity-60'}`}>
-            <input
-              type="checkbox"
-              checked={advanced.autoTrainingQuestAware}
-              disabled={!advanced.autoTrainingPatchEnabled}
-              onChange={(event) => onAdvancedChange({ autoTrainingQuestAware: event.target.checked })}
-              className="w-4 h-4 mt-0.5"
-            />
-            <div>
-              <div className="text-xs font-bold text-zinc-800">Đánh quái theo nhiệm vụ hiện tại</div>
-              <div className="text-[10px] text-zinc-500 mt-1 leading-relaxed">Đọc main quest + sub-step runtime. Các nhiệm vụ quái đã map sẽ chỉ chọn đúng mob; nhiệm vụ boss/điều kiện chưa chắc chắn giữ cách chọn target cũ để không phá auto.</div>
-            </div>
-          </label>
-        </div>
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] text-amber-800 leading-relaxed">
-          Item không còn bật vĩnh viễn: hết thời gian sẽ tự tắt <strong>Tự động luyện tập</strong>. Bật lại item sẽ tạo một phiên thời gian mới.
-        </div>
       </Section>
 
       <Section icon={<Coins className="w-4 h-4 text-amber-600" />} title="Thông tin nguồn" subtitle="Giá trị đọc trực tiếp từ bytecode hiện tại.">

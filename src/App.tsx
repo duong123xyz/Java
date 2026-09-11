@@ -34,6 +34,7 @@ import { ItemsBrowser } from './components/items/ItemsBrowser';
 import { TestGameTab } from './components/emulator/TestGameTab';
 import { GameDataPanel } from './components/game-data/GameDataPanel';
 import { GameMechanicsPanel } from './components/mechanics/GameMechanicsPanel';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { BossPanel } from './components/boss/BossPanel';
 import { MapPanel } from './components/map/MapPanel';
 import { MobPanel } from './components/mobs/MobPanel';
@@ -916,10 +917,12 @@ export default function App() {
                 onDraftsUpdated={handleBossDraftsUpdated}
               />
             ) : activeTab === 'mechanics' ? (
-              <GameMechanicsPanel
-                session={session}
-                onDraftsUpdated={handleMechanicDraftsUpdated}
-              />
+              <ErrorBoundary fallbackTitle="Lỗi hiển thị tab Cơ chế game">
+                <GameMechanicsPanel
+                  session={session}
+                  onDraftsUpdated={handleMechanicDraftsUpdated}
+                />
+              </ErrorBoundary>
             ) : activeTab === 'multiplayer' ? (
               <MultiplayerPanel
                 session={session}

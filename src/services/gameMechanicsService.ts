@@ -757,10 +757,11 @@ export async function analyzeGameMechanics(session: LoadedJarSession): Promise<G
 
 function cloneDraft(draft: GameMechanicsDraft): GameMechanicsDraft {
   return {
+    ...DEFAULT_DRAFT,
     ...draft,
-    dropChancePercent: { ...draft.dropChancePercent },
-    dropQuantity: { ...draft.dropQuantity },
-    customMobDrops: (draft.customMobDrops ?? []).map((rule) => ({ ...rule })),
+    dropChancePercent: { ...(draft?.dropChancePercent ?? DEFAULT_DROP_CHANCES) },
+    dropQuantity: { ...(draft?.dropQuantity ?? DEFAULT_DROP_QUANTITY) },
+    customMobDrops: Array.isArray(draft?.customMobDrops) ? draft.customMobDrops.map((rule) => ({ ...rule })) : [],
   };
 }
 

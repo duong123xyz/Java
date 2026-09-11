@@ -22,7 +22,7 @@ import {
 } from './discipleBytecodeService';
 import {
   buildAdvancedMechanicsPatches,
-  getAdvancedMechanicsDirtyCount,
+  getAdvancedPatchDirtyCount,
 } from './advancedMechanicsService';
 
 export interface CharacterPatchBlocker {
@@ -240,7 +240,7 @@ export async function buildCharacterPatches(
       getCharacterDraft(session, profile)
     );
     const discipleDraft = getDiscipleDraft(session, discipleSnapshot);
-    const advancedDirtyCount = getAdvancedMechanicsDirtyCount(session);
+    const advancedDirtyCount = getAdvancedPatchDirtyCount(session);
     const advancedResult = await buildAdvancedMechanicsPatches(session);
     // Advanced writer còn đảm nhiệm bridge TNSM toàn game -> Đệ tử.
     // Bridge này không phải một draft riêng nên có thể có rewritten class dù advancedDirtyCount = 0.

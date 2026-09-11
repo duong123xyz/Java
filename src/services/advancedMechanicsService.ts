@@ -8,6 +8,11 @@ export interface AdvancedMechanicsDraft {
   gearUpgradeRates: number[];
   crystalUpgradeRates: number[];
   discipleSkillRates: number[][];
+  /** Ngưỡng sức mạnh tự mở Slot 2 / 3 / 4 của Đệ tử. */
+  discipleUnlockThresholds: number[];
+  /** Game gốc khóa cứng Slot 5; bật option này để writer mở Slot 5 theo ngưỡng bên dưới. */
+  discipleSlot5UnlockEnabled: boolean;
+  discipleSlot5UnlockPower: number;
   godWheelEnabled: boolean;
   godWheelCost: number;
   godWheelRates: number[];
@@ -34,10 +39,13 @@ export const ADVANCED_DEFAULTS: AdvancedMechanicsDraft = {
   crystalUpgradeRates: [90, 80, 70, 60, 40, 30, 10, 10, 10],
   discipleSkillRates: [
     [34, 33, 33], // skill đầu: Dragon / Demon / Galick
-    [33, 33, 34], // 150m: 7 / 21 / 35
-    [30, 40, 30], // 1.5b: 42 / 56 / 63
-    [10, 70, 20], // 20b: 91 / 84 / 121
+    [33, 33, 34], // Slot 2: Kamejoko / Masenko / Antomic
+    [30, 40, 30], // Slot 3: Thái Dương Hạ San / Tái tạo năng lượng / Kaioken
+    [10, 70, 20], // Slot 4 (và Slot 5 nếu mở): Biến hình / Đẻ trứng / Khiên năng lượng
   ],
+  discipleUnlockThresholds: [150_000_000, 1_500_000_000, 20_000_000_000],
+  discipleSlot5UnlockEnabled: false,
+  discipleSlot5UnlockPower: 60_000_000_000,
   godWheelEnabled: false,
   godWheelCost: 0,
   godWheelRates: [50, 30, 15, 5],
@@ -49,27 +57,15 @@ export const ADVANCED_DEFAULTS: AdvancedMechanicsDraft = {
 
 const store = new WeakMap<LoadedJarSession, AdvancedMechanicsDraft>();
 
-function clone(draft: AdvancedMechanicsDraft): AdvancedMechanicsDraft {
-  return {
-    ...draft,
-    gearUpgradeRates: [...draft.gearUpgradeRates],
-    crystalUpgradeRates: [...draft.crystalUpgradeRates],
-    discipleSkillRates: draft.discipleSkillRates.map((row) => [...row]),
-    godWheelRates: [...draft.godWheelRates],
-    godWheelRewards: [...draft.godWheelRewards],
-  };
-}
-
-function storageKey(session: LoadedJarSession): string {
-  const file = session.originalFile;
-  return `nro-advanced-mechanics:${file?.name || session.jarInfo.fileName}:${file?.size || 0}`;
-}
-
 function clampChance(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value * 100) / 100));
 }
 function int(value: number, min = 0, max = 2_100_000_000): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+function safeLong(value: number, min = 0, max = 1_000_000_000_000): number {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.round(value)));
 }
@@ -82,6 +78,11 @@ function normalize(input: Partial<AdvancedMechanicsDraft> | null | undefined): A
     gearUpgradeRates: fixedArray(input?.gearUpgradeRates, ADVANCED_DEFAULTS.gearUpgradeRates),
     crystalUpgradeRates: fixedArray(input?.crystalUpgradeRates, ADVANCED_DEFAULTS.crystalUpgradeRates),
     discipleSkillRates: ADVANCED_DEFAULTS.discipleSkillRates.map((row, i) => fixedArray(input?.discipleSkillRates?.[i], row)),
+    discipleUnlockThresholds: ADVANCED_DEFAULTS.discipleUnlockThresholds.map((base, i) =>
+      safeLong(Number(input?.discipleUnlockThresholds?.[i] ?? base), 1, 1_000_000_000_000)
+    ),
+    discipleSlot5UnlockEnabled: Boolean(input?.discipleSlot5UnlockEnabled),
+    discipleSlot5UnlockPower: safeLong(Number(input?.discipleSlot5UnlockPower ?? ADVANCED_DEFAULTS.discipleSlot5UnlockPower), 1, 1_000_000_000_000),
     godWheelEnabled: Boolean(input?.godWheelEnabled),
     godWheelCost: int(Number(input?.godWheelCost ?? ADVANCED_DEFAULTS.godWheelCost), 0),
     godWheelRates: fixedArray(input?.godWheelRates, ADVANCED_DEFAULTS.godWheelRates),
@@ -90,6 +91,24 @@ function normalize(input: Partial<AdvancedMechanicsDraft> | null | undefined): A
     autoTrainingQuestAware: input?.autoTrainingQuestAware !== false,
     autoTrainingDurationMinutes: int(Number(input?.autoTrainingDurationMinutes ?? ADVANCED_DEFAULTS.autoTrainingDurationMinutes), 1, 10080),
   };
+}
+
+function clone(draft: AdvancedMechanicsDraft): AdvancedMechanicsDraft {
+  const norm = normalize(draft);
+  return {
+    ...norm,
+    gearUpgradeRates: [...norm.gearUpgradeRates],
+    crystalUpgradeRates: [...norm.crystalUpgradeRates],
+    discipleSkillRates: norm.discipleSkillRates.map((row) => [...row]),
+    discipleUnlockThresholds: [...norm.discipleUnlockThresholds],
+    godWheelRates: [...norm.godWheelRates],
+    godWheelRewards: [...norm.godWheelRewards],
+  };
+}
+
+function storageKey(session: LoadedJarSession): string {
+  const file = session.originalFile;
+  return `nro-advanced-mechanics:${file?.name || session.jarInfo.fileName}:${file?.size || 0}`;
 }
 
 export function getAdvancedMechanicsDraft(session: LoadedJarSession): AdvancedMechanicsDraft {
@@ -133,6 +152,53 @@ function sameArray(a: number[], b: number[]): boolean {
 function sameMatrix(a: number[][], b: number[][]): boolean {
   return a.length === b.length && a.every((row, i) => sameArray(row, b[i]));
 }
+export interface AutoTrainingItemDraft {
+  enabled: boolean;
+  questAware: boolean;
+  durationMinutes: number;
+}
+
+export function getAutoTrainingItemDraft(session: LoadedJarSession): AutoTrainingItemDraft {
+  const d = getAdvancedMechanicsDraft(session);
+  return {
+    enabled: d.autoTrainingPatchEnabled,
+    questAware: d.autoTrainingQuestAware,
+    durationMinutes: d.autoTrainingDurationMinutes,
+  };
+}
+
+export function setAutoTrainingItemDraft(
+  session: LoadedJarSession,
+  patch: Partial<AutoTrainingItemDraft>
+): AutoTrainingItemDraft {
+  const d = getAdvancedMechanicsDraft(session);
+  const next = setAdvancedMechanicsDraft(session, {
+    ...d,
+    autoTrainingPatchEnabled: patch.enabled ?? d.autoTrainingPatchEnabled,
+    autoTrainingQuestAware: patch.questAware ?? d.autoTrainingQuestAware,
+    autoTrainingDurationMinutes: patch.durationMinutes ?? d.autoTrainingDurationMinutes,
+  });
+  return { enabled: next.autoTrainingPatchEnabled, questAware: next.autoTrainingQuestAware, durationMinutes: next.autoTrainingDurationMinutes };
+}
+
+export function resetAutoTrainingItemDraft(session: LoadedJarSession): AutoTrainingItemDraft {
+  return setAutoTrainingItemDraft(session, {
+    enabled: ADVANCED_DEFAULTS.autoTrainingPatchEnabled,
+    questAware: ADVANCED_DEFAULTS.autoTrainingQuestAware,
+    durationMinutes: ADVANCED_DEFAULTS.autoTrainingDurationMinutes,
+  });
+}
+
+export function getAutoTrainingItemDirtyCount(session: LoadedJarSession): number {
+  const d = getAdvancedMechanicsDraft(session);
+  let count = 0;
+  if (d.autoTrainingPatchEnabled !== ADVANCED_DEFAULTS.autoTrainingPatchEnabled) count++;
+  if (d.autoTrainingPatchEnabled && d.autoTrainingQuestAware !== ADVANCED_DEFAULTS.autoTrainingQuestAware) count++;
+  if (d.autoTrainingPatchEnabled && d.autoTrainingDurationMinutes !== ADVANCED_DEFAULTS.autoTrainingDurationMinutes) count++;
+  return count;
+}
+
+/** Tổng dirty của advanced writer. Auto Training hiển thị trong Item nhưng vẫn cộng vào aggregate để App/Test Workspace không bỏ sót draft. */
 export function getAdvancedMechanicsDirtyCount(session: LoadedJarSession): number {
   const d = getAdvancedMechanicsDraft(session);
   let count = 0;
@@ -140,12 +206,18 @@ export function getAdvancedMechanicsDirtyCount(session: LoadedJarSession): numbe
   if (!sameArray(d.gearUpgradeRates, ADVANCED_DEFAULTS.gearUpgradeRates)) count++;
   if (!sameArray(d.crystalUpgradeRates, ADVANCED_DEFAULTS.crystalUpgradeRates)) count++;
   if (!sameMatrix(d.discipleSkillRates, ADVANCED_DEFAULTS.discipleSkillRates)) count++;
+  if (!sameArray(d.discipleUnlockThresholds, ADVANCED_DEFAULTS.discipleUnlockThresholds)) count++;
+  if (d.discipleSlot5UnlockEnabled !== ADVANCED_DEFAULTS.discipleSlot5UnlockEnabled) count++;
+  if (d.discipleSlot5UnlockEnabled && d.discipleSlot5UnlockPower !== ADVANCED_DEFAULTS.discipleSlot5UnlockPower) count++;
   if (d.godWheelEnabled !== ADVANCED_DEFAULTS.godWheelEnabled) count++;
   if (d.godWheelEnabled && (d.godWheelCost !== ADVANCED_DEFAULTS.godWheelCost || !sameArray(d.godWheelRates, ADVANCED_DEFAULTS.godWheelRates) || !sameArray(d.godWheelRewards, ADVANCED_DEFAULTS.godWheelRewards))) count++;
-  if (d.autoTrainingPatchEnabled !== ADVANCED_DEFAULTS.autoTrainingPatchEnabled) count++;
-  if (d.autoTrainingPatchEnabled && d.autoTrainingQuestAware !== ADVANCED_DEFAULTS.autoTrainingQuestAware) count++;
-  if (d.autoTrainingPatchEnabled && d.autoTrainingDurationMinutes !== ADVANCED_DEFAULTS.autoTrainingDurationMinutes) count++;
+  // Auto Training hiển thị/chỉnh trong Item, nhưng vẫn đi chung writer advanced để Test Workspace nhận draft.
+  count += getAutoTrainingItemDirtyCount(session);
   return count;
+}
+
+export function getAdvancedPatchDirtyCount(session: LoadedJarSession): number {
+  return getAdvancedMechanicsDirtyCount(session);
 }
 
 function validateRates(draft: AdvancedMechanicsDraft): Array<{ field: string; message: string }> {
@@ -331,6 +403,69 @@ function ensureStaticMethodRef(input:ArrayBuffer,owner:string,name:string,descri
   const out=new Uint8Array(bytes.length+add.length);out.set(bytes.slice(0,layout.cpEnd));out.set(add,layout.cpEnd);out.set(bytes.slice(layout.cpEnd),layout.cpEnd+add.length);w2(out,8,layout.cpCount+6);
   return{bytes:toAB(out),ref};
 }
+
+const DISCIPLE_UNLOCK_HELPER_INTERNAL='patch/PanelDiscipleUnlock';
+const DISCIPLE_UNLOCK_HELPER_PATH='patch/PanelDiscipleUnlock.class';
+const DISCIPLE_UNLOCK_HELPER_BASE64='yv66vgAAAC8AKwoAAgADBwAEDAAFAAYBABBqYXZhL2xhbmcvT2JqZWN0AQAGPGluaXQ+AQADKClWCQAIAAkHAAoMAAsADAEAGXBhdGNoL1BhbmVsRGlzY2lwbGVVbmxvY2sBAAVTTE9UMgEAAUoJAAgADgwADwAMAQAFU0xPVDMJAAgAEQwAEgAMAQAFU0xPVDQJAAgAFAwAFQAWAQANU0xPVDVfRU5BQkxFRAEAAUkJAAgAGAwAGQAMAQAFU0xPVDUFAABlDhJO8ccFAADKHCSd444FAAEvKjbs1VUFAAGUOEk7xxwDAXibjQEABENvZGUBAA9MaW5lTnVtYmVyVGFibGUBAAdyZWFjaGVkAQAFKEpJKVoBAA1TdGFja01hcFRhYmxlAQAIPGNsaW5pdD4BAApTb3VyY2VGaWxlAQAYUGFuZWxEaXNjaXBsZVVubG9jay5qYXZhADEACAACAAAABQAKAAsADAAAAAoADwAMAAAACgASAAwAAAAKABkADAAAAAoAFQAWAAAAAwABAAUABgABACMAAAAdAAEAAQAAAAUqtwABsQAAAAEAJAAAAAYAAQAAAAIACQAlACYAAQAjAAAApQAEAAMAAABgHKoAAAAAAF0AAAABAAAABAAAAB8AAAAtAAAAOwAAAEkesgAHlJsABwSnAAQDrB6yAA2UmwAHBKcABAOsHrIAEJSbAAcEpwAEA6yyABOZAA8esgAXlJsABwSnAAQDrAOsAAAAAgAkAAAAGgAGAAAACQAgAAoALgALADwADABKAA0AXgAOACcAAAATAA0gC0ABAAtAAQALQAEAEUABAAAIACgABgABACMAAABGAAIAAAAAAB4UABqzAAcUAByzAA0UAB6zABAUACCzABcSIrMAE7EAAAABACQAAAAWAAUAAAADAAYABAAMAAUAEgAGABgABwABACkAAAACACo=';
+
+function buildDiscipleUnlockHelper(draft:AdvancedMechanicsDraft):ArrayBuffer{
+  const bytes=b64(DISCIPLE_UNLOCK_HELPER_BASE64);
+  const layout=parseLayout(toAB(bytes));
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  const thresholds=[
+    [111111111111111n, BigInt(Math.round(draft.discipleUnlockThresholds[0]))],
+    [222222222222222n, BigInt(Math.round(draft.discipleUnlockThresholds[1]))],
+    [333333333333333n, BigInt(Math.round(draft.discipleUnlockThresholds[2]))],
+    [444444444444444n, BigInt(Math.round(draft.discipleSlot5UnlockPower))],
+  ] as const;
+  for(const [sentinel,value] of thresholds){
+    view.setBigInt64(findUniqueLong(layout,sentinel).payloadOffset,value,false);
+  }
+  view.setInt32(findUniqueInt(layout,24681357).payloadOffset,draft.discipleSlot5UnlockEnabled?1:0,false);
+  return toAB(bytes);
+}
+
+function buildDiscipleUnlockCode(layout:ClassLayout,reachedRef:number):Uint8Array{
+  const cjRef=findRef(layout,9,'a/a/H','cj','J');
+  const cVRef=findRef(layout,9,'a/a/H','cV','[I');
+  const cWRef=findRef(layout,9,'a/a/H','cW','[I');
+  const jRef=findRef(layout,10,'a/a/l','J','(I)I');
+  const charRef=findRef(layout,10,'a/c','b','()La/c;');
+  const syncRef=findRef(layout,10,'a/a/l','a','(La/a/H;La/c;)V');
+  const playerRef=findRef(layout,10,'a/a/r','a','()La/a/r;');
+  const refreshRef=findRef(layout,10,'a/a/r','fL','()V');
+  if(!cjRef||!cVRef||!cWRef||!jRef||!charRef||!syncRef||!playerRef||!refreshRef){
+    throw new Error('Không resolve đủ field/method cho writer ngưỡng skill Đệ tử.');
+  }
+  const ref=(opcode:number,index:number)=>[opcode,(index>>8)&255,index&255];
+  const a=new Asm();
+  a.emit(0x03,0x3c); // changed=false
+  for(let slot=1;slot<=4;slot++){
+    const next=`unlock_next_${slot}`;
+    a.emit(0x2a,...ref(0xb4,cjRef),...pushInt(slot),...ref(0xb8,reachedRef));
+    a.branch(0x99,next); // helper says not reached / slot5 disabled
+    a.emit(0x2a,...ref(0xb4,cVRef),...pushInt(slot),0x2e);
+    a.branch(0x9c,next); // already has skill
+    a.emit(...pushInt(slot),...ref(0xb8,jRef),0x3d); // local2 = J(slot)
+    a.emit(0x2a,...ref(0xb4,cVRef),...pushInt(slot),0x1c,0x4f);
+    a.emit(0x2a,...ref(0xb4,cWRef),...pushInt(slot),0x04,0x4f);
+    a.emit(0x04,0x3c);
+    a.label(next);
+  }
+  a.emit(0x1b);a.branch(0x99,'unlock_end');
+  a.emit(0x2a,...ref(0xb8,charRef),...ref(0xb8,syncRef));
+  a.emit(...ref(0xb8,playerRef),...ref(0xb6,refreshRef));
+  a.label('unlock_end');a.emit(0xb1);
+  return a.finish();
+}
+
+function patchDiscipleUnlockLogic(input:ArrayBuffer,draft:AdvancedMechanicsDraft):ArrayBuffer{
+  const ensured=ensureStaticMethodRef(input,DISCIPLE_UNLOCK_HELPER_INTERNAL,'reached','(JI)Z');
+  const layout=parseLayout(ensured.bytes);
+  const code=buildDiscipleUnlockCode(layout,ensured.ref);
+  return replaceCode(ensured.bytes,'h','(La/a/H;)V',code,3,3);
+}
+
 function patchDiscipleTnsmBridge(input:ArrayBuffer):ArrayBuffer{
   const oldLayout=parseLayout(input);
   const oldRef=findRef(oldLayout,10,'patch/GTLFix','applyDiscipleReward','(La/a/H;J)J');
@@ -433,7 +568,7 @@ function validateClass(path:string, bytes:ArrayBuffer):void{const p=parseClassFi
 export async function buildAdvancedMechanicsPatches(session:LoadedJarSession):Promise<AdvancedMechanicsPatchResult>{
   const draft=getAdvancedMechanicsDraft(session);
   const gameplay=getGameMechanicsDraft(session);
-  const dirty=getAdvancedMechanicsDirtyCount(session);
+  const dirty=getAdvancedPatchDirtyCount(session);
   const needsDiscipleTnsm=Math.abs(gameplay.tnsmMultiplier-1)>1e-12;
   const rewritten=new Map<string,ArrayBuffer>();const diagnostics:string[]=[];const blockers=validateRates(draft);
   if(draft.unlimitedPower&&Math.abs(gameplay.powerCapMultiplier-1)>1e-12){
@@ -451,11 +586,23 @@ export async function buildAdvancedMechanicsPatches(session:LoadedJarSession):Pr
     }
 
     const skillRatesChanged=!sameMatrix(draft.discipleSkillRates,ADVANCED_DEFAULTS.discipleSkillRates);
-    if(skillRatesChanged||needsDiscipleTnsm){
+    const unlockThresholdsChanged=!sameArray(draft.discipleUnlockThresholds,ADVANCED_DEFAULTS.discipleUnlockThresholds);
+    const slot5UnlockChanged=draft.discipleSlot5UnlockEnabled!==ADVANCED_DEFAULTS.discipleSlot5UnlockEnabled
+      || (draft.discipleSlot5UnlockEnabled && draft.discipleSlot5UnlockPower!==ADVANCED_DEFAULTS.discipleSlot5UnlockPower);
+    const unlockLogicChanged=unlockThresholdsChanged||slot5UnlockChanged;
+    if(skillRatesChanged||unlockLogicChanged||needsDiscipleTnsm){
       const e=session.zip.file('a/a/l.class');if(!e)throw new Error('Không tìm thấy a/a/l.class.');let b=await e.async('arraybuffer');
       if(skillRatesChanged){
         b=rerouteInitialSkill(b);let lay=parseLayout(b);const wRef=findRef(lay,10,'a/a/l','w','(I)I');if(!wRef)throw new Error('Không resolve được RNG l.w(I)I.');
         b=replaceCode(b,'J','(I)I',buildDiscipleSkillCode(draft.discipleSkillRates,wRef),2,2);patches+=2;diagnostics.push('RNG skill Đệ tử: skill đầu + 3 mốc sức mạnh đã đổi tỷ lệ.');
+      }
+      if(unlockLogicChanged){
+        b=patchDiscipleUnlockLogic(b,draft);
+        const unlockHelper=buildDiscipleUnlockHelper(draft);
+        validateClass(DISCIPLE_UNLOCK_HELPER_PATH,unlockHelper);
+        rewritten.set(DISCIPLE_UNLOCK_HELPER_PATH,unlockHelper);
+        patches+=2;
+        diagnostics.push(`Ngưỡng mở skill Đệ tử: Slot 2=${draft.discipleUnlockThresholds[0]}, Slot 3=${draft.discipleUnlockThresholds[1]}, Slot 4=${draft.discipleUnlockThresholds[2]}${draft.discipleSlot5UnlockEnabled?`, Slot 5=${draft.discipleSlot5UnlockPower}`:', Slot 5=khóa gốc'}.`);
       }
       if(needsDiscipleTnsm){
         b=patchDiscipleTnsmBridge(b);rewritten.set(GAMEPLAY_HELPER_PATH,buildGameplayHelper(gameplay.tnsmMultiplier));patches+=2;
