@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Search,
   AlertTriangle,
@@ -58,16 +58,20 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame, o
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('all');
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
+  const [mobileTab, setMobileTab] = useState<'list' | 'editor'>('list');
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showChangesModal, setShowChangesModal] = useState(false);
   const [showNewItemModal, setShowNewItemModal] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [draftRevision, setDraftRevision] = useState(0);
 
+  const onDraftsUpdatedRef = useRef(onDraftsUpdated);
+  onDraftsUpdatedRef.current = onDraftsUpdated;
+
   const notifyDraftsChange = useCallback(() => {
     const dirtyCount = getDirtyCount(session.itemDrafts);
-    onDraftsUpdated?.(dirtyCount);
-  }, [session, onDraftsUpdated]);
+    onDraftsUpdatedRef.current?.(dirtyCount);
+  }, [session]);
 
   const bumpDraftRevision = useCallback(() => {
     setDraftRevision((r) => r + 1);
@@ -270,7 +274,7 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame, o
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Tìm theo ID, tên, mô tả hoặc class nguồn..."
-              className="w-full bg-zinc-950 border border-zinc-700/80 focus:border-amber-500 rounded-lg pl-9 pr-8 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-mono"
+              className="w-full bg-zinc-950 border border-zinc-700/80 focus:border-amber-500 rounded-lg pl-9 pr-8 py-2 sm:py-1.5 text-[16px] sm:text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-mono"
             />
             {searchQuery && (
               <button
@@ -400,8 +404,40 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame, o
         )}
       </div>
 
+      {/* Nút chuyển đổi chế độ xem trên Mobile: Danh sách / Soạn thảo */}
+      <div className="flex lg:hidden items-center gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-xl">
+        <button
+          type="button"
+          onClick={() => setMobileTab('list')}
+          className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            mobileTab === 'list'
+              ? 'bg-amber-500 text-zinc-950 font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Danh sách ({filteredItems.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('editor')}
+          className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            mobileTab === 'editor'
+              ? 'bg-amber-500 text-zinc-950 font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <PackagePlus className="w-3.5 h-3.5" />
+          <span className="truncate max-w-[150px]">
+            {selectedItem ? `Soạn: ${selectedItem.name || `ID ${selectedItem.id}`}` : 'Soạn thảo'}
+          </span>
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-6 xl:col-span-5 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col">
+        <div className={`lg:col-span-6 xl:col-span-5 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col ${
+          mobileTab === 'editor' ? 'hidden lg:flex' : 'flex'
+        }`}>
           <div className="px-4 py-2.5 bg-zinc-850/80 border-b border-zinc-800 flex items-center justify-between text-xs font-mono text-zinc-400">
             <div className="flex items-center gap-2">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -462,7 +498,10 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame, o
                     return (
                       <tr
                         key={itemKey}
-                        onClick={() => setSelectedItemKey(itemKey)}
+                        onClick={() => {
+                          setSelectedItemKey(itemKey);
+                          setMobileTab('editor');
+                        }}
                         className={`cursor-pointer transition-colors ${
                           isSelected
                             ? 'bg-amber-500/15 text-amber-200 border-l-2 border-amber-400'
@@ -493,7 +532,23 @@ export function ItemsBrowser({ session, onDraftsUpdated, onNavigateToTestGame, o
           )}
         </div>
 
-        <div className="lg:col-span-6 xl:col-span-7 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col max-h-[710px]">
+        <div className={`lg:col-span-6 xl:col-span-7 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col max-h-[710px] ${
+          mobileTab === 'list' ? 'hidden lg:flex' : 'flex'
+        }`}>
+          {/* Header quay lại danh sách trên mobile */}
+          <div className="lg:hidden px-3 py-2.5 bg-zinc-850 border-b border-zinc-800 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setMobileTab('list')}
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>← Trở lại danh sách ({filteredItems.length})</span>
+            </button>
+            <span className="text-xs font-mono text-zinc-400 truncate max-w-[140px]">
+              {selectedItem?.name || 'Chi tiết'}
+            </span>
+          </div>
           {selectedItem && selectedItemDraft ? (
             <div className="overflow-y-auto p-4 scrollbar-thin">
               <ItemEditorForm

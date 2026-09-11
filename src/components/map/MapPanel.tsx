@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   MapPinned,
   Search,
@@ -61,6 +61,7 @@ export function MapPanel({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<MapFilter>('all');
   const [selectedMapId, setSelectedMapId] = useState<number | null>(null);
+  const [mobileTab, setMobileTab] = useState<'list' | 'detail'>('list');
   const [revision, setRevision] = useState(0);
 
   const load = async () => {
@@ -80,6 +81,9 @@ export function MapPanel({
     }
   };
 
+  const onDraftsUpdatedRef = useRef(onDraftsUpdated);
+  onDraftsUpdatedRef.current = onDraftsUpdated;
+
   useEffect(() => {
     load();
   }, [session]);
@@ -87,8 +91,8 @@ export function MapPanel({
   useEffect(() => {
     if (!snapshot) return;
     void revision;
-    onDraftsUpdated?.(getDirtyMapCount(session, snapshot.maps));
-  }, [session, snapshot, revision, onDraftsUpdated]);
+    onDraftsUpdatedRef.current?.(getDirtyMapCount(session, snapshot.maps));
+  }, [session, snapshot, revision]);
 
   const filteredMaps = useMemo(() => {
     if (!snapshot) return [];
@@ -192,8 +196,39 @@ export function MapPanel({
         </div>
       </div>
 
+      {/* Segmented bar trên Mobile */}
+      <div className="flex xl:hidden items-center gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-xl shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileTab('list')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'list'
+              ? 'bg-blue-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <MapPinned className="w-3.5 h-3.5" />
+          <span>Danh sách ({filteredMaps.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('detail')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'detail'
+              ? 'bg-blue-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <span className="truncate max-w-[150px]">
+            {selectedMap ? `Map: ${selectedMap.name}` : 'Chi tiết Map'}
+          </span>
+        </button>
+      </div>
+
       <div className="min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[350px_minmax(0,1fr)] gap-2">
-        <aside className="min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden flex flex-col">
+        <aside className={`min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden flex flex-col ${
+          mobileTab === 'detail' ? 'hidden xl:flex' : 'flex'
+        }`}>
           <div className="shrink-0 p-2 border-b border-zinc-800 bg-zinc-950/50 space-y-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -201,7 +236,7 @@ export function MapPanel({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tên map, ID, NPC, mob, boss..."
-                className="w-full bg-zinc-950 border border-zinc-700 rounded-md pl-8 pr-2 py-1.5 text-[11px] text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-blue-500 font-mono"
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-md pl-8 pr-2 py-2 sm:py-1.5 text-[16px] sm:text-[11px] text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-blue-500 font-mono"
               />
             </div>
 
@@ -226,7 +261,10 @@ export function MapPanel({
                 <button
                   key={map.id}
                   type="button"
-                  onClick={() => setSelectedMapId(map.id)}
+                  onClick={() => {
+                    setSelectedMapId(map.id);
+                    setMobileTab('detail');
+                  }}
                   className={`w-full h-[62px] text-left px-2.5 border-b border-zinc-800/70 transition-colors cursor-pointer ${
                     selected
                       ? 'bg-blue-500/10 border-l-2 border-l-blue-400'
@@ -263,7 +301,23 @@ export function MapPanel({
           </div>
         </aside>
 
-        <section className="min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden">
+        <section className={`min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden flex flex-col ${
+          mobileTab === 'list' ? 'hidden xl:flex' : 'flex'
+        }`}>
+          {/* Header quay lại trên mobile */}
+          <div className="xl:hidden px-3 py-2 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between shrink-0">
+            <button
+              type="button"
+              onClick={() => setMobileTab('list')}
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4 rotate-180" />
+              <span>← Trở lại danh sách ({filteredMaps.length})</span>
+            </button>
+            <span className="text-xs font-mono text-zinc-400 truncate max-w-[140px]">
+              {selectedMap?.name}
+            </span>
+          </div>
           {selectedMap ? (
             <MapDetail
               session={session}
@@ -682,7 +736,7 @@ function TextEditor({ label, value, onChange }: { label: string; value: string; 
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-2.5 py-1.5 text-[11px] text-zinc-100 focus:outline-none focus:border-blue-500"
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-3 py-2 sm:py-1.5 text-[16px] sm:text-[11px] text-zinc-100 focus:outline-none focus:border-blue-500 font-mono"
       />
     </label>
   );
@@ -707,7 +761,7 @@ function NumberEditor({
         value={value}
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-2.5 py-1.5 text-[11px] text-zinc-100 font-mono focus:outline-none focus:border-blue-500"
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-3 py-2 sm:py-1.5 text-[16px] sm:text-[11px] text-zinc-100 font-mono focus:outline-none focus:border-blue-500"
       />
     </label>
   );
@@ -725,7 +779,7 @@ function CoordinateInputs({
   onY: (value: number) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-1 w-[135px] shrink-0">
+    <div className="grid grid-cols-2 gap-1.5 w-[150px] sm:w-[135px] shrink-0">
       <TinyNumber label="X" value={x} onChange={onX} />
       <TinyNumber label="Y" value={y} onChange={onY} />
     </div>
@@ -745,7 +799,7 @@ function TinyNumber({
 }) {
   return (
     <label className="relative block min-w-0">
-      <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[7px] text-zinc-600 font-mono pointer-events-none">
+      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-zinc-500 font-mono pointer-events-none">
         {label}
       </span>
       <input
@@ -753,7 +807,7 @@ function TinyNumber({
         value={value}
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full bg-zinc-950 border border-zinc-700 rounded-md pl-6 pr-1 py-1.5 text-[9px] text-zinc-100 font-mono focus:outline-none focus:border-blue-500"
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-md pl-6 pr-1.5 py-1.5 sm:py-1 text-[16px] sm:text-[10px] text-zinc-100 font-mono focus:outline-none focus:border-blue-500"
       />
     </label>
   );

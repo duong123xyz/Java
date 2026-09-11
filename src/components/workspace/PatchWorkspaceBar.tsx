@@ -1,12 +1,18 @@
 import React, { useState } from 'react';
-import { ClipboardList, Crown, Network, PackagePlus, Trash2, X } from 'lucide-react';
+import { ClipboardList, Crown, Network, PackagePlus, Sparkles, Tag, Trash2, X } from 'lucide-react';
 import { LoadedJarSession } from '../../types/jar';
 import { QuestPanel } from '../quests/QuestPanel';
+import { MetadataVersionModal } from './MetadataVersionModal';
 import {
   clearPatchWorkspace,
   getPatchWorkspaceOperations,
   removePatchWorkspaceOperation,
 } from '../../services/patchWorkspaceStateService';
+import {
+  bumpSessionVersion,
+  bumpVersionString,
+  getWorkspaceMetadata,
+} from '../../services/workspaceMetadataService';
 
 interface PatchWorkspaceBarProps {
   session: LoadedJarSession;
@@ -18,7 +24,9 @@ export function PatchWorkspaceBar({
   onChanged,
 }: PatchWorkspaceBarProps) {
   const [showQuestPanel, setShowQuestPanel] = useState(false);
+  const [showMetadataModal, setShowMetadataModal] = useState(false);
   const operations = getPatchWorkspaceOperations(session);
+  const metadata = getWorkspaceMetadata(session);
 
   const newItemCount = operations.filter(
     (operation) => operation.kind === 'NEW_ITEM'
@@ -33,7 +41,38 @@ export function PatchWorkspaceBar({
 
   return (
     <>
-      <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50/80 px-2.5 py-1.5 flex items-center gap-2 min-w-0">
+      <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50/80 px-2.5 py-1.5 flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none touch-pan-x">
+        <button
+          id="open-metadata-modal-button"
+          type="button"
+          onClick={() => setShowMetadataModal(true)}
+          className="shrink-0 h-7 px-2.5 rounded-md border border-emerald-300 bg-white hover:bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+          title="Chỉnh sửa Tên file xuất, Tác giả và Phiên bản cho file JAR"
+        >
+          <Tag className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          <span className="font-mono max-w-[120px] truncate">{metadata.exportFileName}</span>
+          <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono text-[9px] font-bold border border-emerald-200 shrink-0">
+            v{metadata.version}
+          </span>
+          <span className="hidden sm:inline text-[9px] text-zinc-500 font-normal max-w-[80px] truncate">
+            ({metadata.author})
+          </span>
+        </button>
+
+        <button
+          id="quick-bump-version-button"
+          type="button"
+          onClick={() => {
+            bumpSessionVersion(session, metadata.incrementStrategy, 'MANUAL');
+            onChanged();
+          }}
+          className="shrink-0 h-7 px-2 rounded-md border border-emerald-200 bg-white hover:bg-emerald-50 text-[10px] font-mono text-emerald-700 font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+          title={`Tăng phiên bản nhanh (${metadata.incrementStrategy}: ${metadata.version} -> ${bumpVersionString(metadata.version, metadata.incrementStrategy)})`}
+        >
+          <Sparkles className="w-3 h-3 text-amber-500" />
+          <span>+1 Ver</span>
+        </button>
+
         <button
           type="button"
           onClick={() => setShowQuestPanel(true)}
@@ -144,6 +183,14 @@ export function PatchWorkspaceBar({
           session={session}
           onClose={() => setShowQuestPanel(false)}
           onWorkspaceUpdated={onChanged}
+        />
+      )}
+
+      {showMetadataModal && (
+        <MetadataVersionModal
+          session={session}
+          onClose={() => setShowMetadataModal(false)}
+          onSaved={onChanged}
         />
       )}
     </>

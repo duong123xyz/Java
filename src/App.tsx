@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   Terminal,
   XCircle,
@@ -20,6 +20,9 @@ import {
   Sparkles,
   Network,
   Download,
+  Tag,
+  Edit3,
+  Sliders,
 } from 'lucide-react';
 import { LoadedJarSession } from './types/jar';
 import { loadAndAnalyzeJarSession } from './services/jarService';
@@ -38,6 +41,14 @@ import { CharacterPanel } from './components/character/CharacterPanel';
 import { SkillPanel } from './components/skills/SkillPanel';
 import { MultiplayerPanel } from './components/multiplayer/MultiplayerPanel';
 import { PatchWorkspaceBar } from './components/workspace/PatchWorkspaceBar';
+import { MetadataVersionModal } from './components/workspace/MetadataVersionModal';
+import { AppTabNavigation, AppTabKey } from './components/navigation/AppTabNavigation';
+import {
+  bumpSessionVersion,
+  getWorkspaceMetadata,
+  recordVersionHistory,
+  resolveExportFileName,
+} from './services/workspaceMetadataService';
 import { getDirtyCount } from './services/itemDraftService';
 import {
   DraftTestBuildResult,
@@ -273,7 +284,7 @@ const LIGHT_THEME_CSS = `
 
 export default function App() {
   const [session, setSession] = useState<LoadedJarSession | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'game-data' | 'maps' | 'mobs' | 'characters' | 'skills' | 'bosses' | 'mechanics' | 'multiplayer' | 'explorer' | 'items' | 'test'>('overview');
+  const [activeTab, setActiveTab] = useState<AppTabKey>('overview');
   const [testGameSource, setTestGameSource] = useState<'ORIGINAL' | 'PATCHED'>('ORIGINAL');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -292,33 +303,111 @@ export default function App() {
   const [isRestoringWorkspace, setIsRestoringWorkspace] = useState(true);
   const [workspaceStatus, setWorkspaceStatus] = useState<'idle' | 'saved' | 'restored' | 'error'>('idle');
   const [, setPatchWorkspaceRevision] = useState(0);
+  const [showMetadataModal, setShowMetadataModal] = useState(false);
+  const [exportNotice, setExportNotice] = useState<{
+    fileName: string;
+    version: string;
+    nextVersion?: string;
+  } | null>(null);
+
+  const dirtyCountsRef = useRef<WorkspaceDirtyCounts>({
+    items: 0,
+    npcs: 0,
+    maps: 0,
+    mobs: 0,
+    characters: 0,
+    skills: 0,
+    bosses: 0,
+    mechanics: 0,
+    parts: 0,
+  });
 
   const currentWorkspaceCounts = (
     patch: Partial<WorkspaceDirtyCounts> = {}
   ): WorkspaceDirtyCounts => ({
-    items: patch.items ?? dirtyItemCount,
-    npcs: patch.npcs ?? dirtyNpcCount,
-    maps: patch.maps ?? dirtyMapCount,
-    mobs: patch.mobs ?? dirtyMobCount,
-    characters: patch.characters ?? dirtyCharacterCount,
-    bosses: patch.bosses ?? dirtyBossCount,
-    mechanics: patch.mechanics ?? dirtyMechanicCount,
-    skills: patch.skills ?? dirtySkillCount,
+    items: patch.items ?? dirtyCountsRef.current.items,
+    npcs: patch.npcs ?? dirtyCountsRef.current.npcs,
+    maps: patch.maps ?? dirtyCountsRef.current.maps,
+    mobs: patch.mobs ?? dirtyCountsRef.current.mobs,
+    characters: patch.characters ?? dirtyCountsRef.current.characters,
+    bosses: patch.bosses ?? dirtyCountsRef.current.bosses,
+    mechanics: patch.mechanics ?? dirtyCountsRef.current.mechanics,
+    skills: patch.skills ?? dirtyCountsRef.current.skills,
     parts: 0,
   });
 
-  const persistDraftChange = (
+  const updateDirtyCount = useCallback((key: keyof WorkspaceDirtyCounts, count: number) => {
+    if (dirtyCountsRef.current[key] === count) return;
+    dirtyCountsRef.current[key] = count;
+
+    if (key === 'items') setDirtyItemCount(count);
+    else if (key === 'npcs') setDirtyNpcCount(count);
+    else if (key === 'maps') setDirtyMapCount(count);
+    else if (key === 'mobs') setDirtyMobCount(count);
+    else if (key === 'characters') setDirtyCharacterCount(count);
+    else if (key === 'skills') setDirtySkillCount(count);
+    else if (key === 'bosses') setDirtyBossCount(count);
+    else if (key === 'mechanics') setDirtyMechanicCount(count);
+
+    if (session) {
+      queueWorkspaceDraftSave(session, { ...dirtyCountsRef.current });
+      setWorkspaceStatus('saved');
+    }
+  }, [session]);
+
+  const handleNpcDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('npcs', count);
+  }, [updateDirtyCount]);
+
+  const handleMapDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('maps', count);
+  }, [updateDirtyCount]);
+
+  const handleMobDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('mobs', count);
+  }, [updateDirtyCount]);
+
+  const handleCharacterDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('characters', count);
+  }, [updateDirtyCount]);
+
+  const handleSkillDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('skills', count);
+  }, [updateDirtyCount]);
+
+  const handleBossDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('bosses', count);
+  }, [updateDirtyCount]);
+
+  const handleMechanicDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('mechanics', count);
+  }, [updateDirtyCount]);
+
+  const handleItemDraftsUpdated = useCallback((count: number) => {
+    updateDirtyCount('items', count);
+  }, [updateDirtyCount]);
+
+  const persistDraftChange = useCallback((
     patch: Partial<WorkspaceDirtyCounts> = {}
   ) => {
     if (!session) return;
     queueWorkspaceDraftSave(session, currentWorkspaceCounts(patch));
     setWorkspaceStatus('saved');
-  };
+  }, [session]);
 
-  const handlePatchWorkspaceUpdated = () => {
+  const handlePatchWorkspaceUpdated = useCallback(() => {
+    if (session) {
+      const meta = getWorkspaceMetadata(session);
+      if (meta.autoIncrementOnEdit) {
+        bumpSessionVersion(session, meta.incrementStrategy, 'EDIT');
+      }
+    }
     setPatchWorkspaceRevision((value) => value + 1);
-    persistDraftChange();
-  };
+    if (session) {
+      queueWorkspaceDraftSave(session, { ...dirtyCountsRef.current });
+      setWorkspaceStatus('saved');
+    }
+  }, [session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -333,6 +422,7 @@ export default function App() {
         const restored = await restoreWorkspaceDrafts(restoredSession);
         if (cancelled) return;
 
+        dirtyCountsRef.current = { ...restored.counts, parts: 0 };
         setSession(restoredSession);
         setActiveTab('overview');
         setTestGameSource('ORIGINAL');
@@ -408,6 +498,7 @@ export default function App() {
             parts: 0,
           };
       await saveWorkspaceDrafts(loadedSession, restoredCounts);
+      dirtyCountsRef.current = { ...restoredCounts, parts: 0 };
       setWorkspaceStatus('saved');
       setSession(loadedSession);
       setActiveTab('overview');
@@ -539,26 +630,42 @@ export default function App() {
   const handleExportWorkspaceJar = async () => {
     if (!session || isBuildingDraftTest) return;
 
+    const metadata = getWorkspaceMetadata(session);
     let candidate =
       session.candidateOutput?.status === 'VALIDATED'
         ? session.candidateOutput
         : null;
 
-    if (!candidate && totalDirtyDrafts > 0) {
+    if (!candidate) {
       candidate = await handleTestDraft(false);
     }
 
     if (candidate?.status === 'VALIDATED') {
-      downloadJarBlob(candidate.blob, candidate.fileName);
-      return;
-    }
+      const finalFileName = candidate.fileName || resolveExportFileName(metadata);
+      downloadJarBlob(candidate.blob, finalFileName);
 
-    if (totalDirtyDrafts === 0) {
-      const originalName = session.jarInfo.fileName || 'game.jar';
-      const outputName = originalName.toLowerCase().endsWith('.jar')
-        ? `${originalName.slice(0, -4)}_workspace.jar`
-        : `${originalName}_workspace.jar`;
-      downloadJarBlob(session.originalFile, outputName);
+      recordVersionHistory(session, {
+        action: 'EXPORT',
+        version: metadata.version,
+        fileName: finalFileName,
+        description: `Tải về file JAR thành công: ${finalFileName}`,
+      });
+
+      let nextVersionStr: string | undefined;
+      if (metadata.autoIncrementOnDownload) {
+        const bumped = bumpSessionVersion(session, metadata.incrementStrategy, 'EXPORT');
+        nextVersionStr = bumped.newVersion;
+        setPatchWorkspaceRevision((v) => v + 1);
+      }
+
+      setExportNotice({
+        fileName: finalFileName,
+        version: metadata.version,
+        nextVersion: nextVersionStr,
+      });
+
+      setTimeout(() => setExportNotice(null), 8000);
+      void flushWorkspaceDraftSave().catch(() => undefined);
       return;
     }
 
@@ -589,10 +696,28 @@ export default function App() {
           <div className="flex items-center gap-3">
             {session ? (
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800/90 border border-zinc-700 text-xs font-mono text-zinc-200">
+                <button
+                  id="header-metadata-button"
+                  type="button"
+                  onClick={() => setShowMetadataModal(true)}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700/90 border border-zinc-700 text-xs font-mono text-zinc-200 cursor-pointer transition-colors shadow-2xs"
+                  title="Chỉnh sửa Tên file, Tác giả và Phiên bản xuất JAR"
+                >
+                  <Tag className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="hidden sm:inline text-zinc-400">Xuất:</span>
+                  <span className="font-semibold text-emerald-300 max-w-[85px] sm:max-w-[130px] truncate">
+                    {getWorkspaceMetadata(session).exportFileName}
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700 text-[10px] font-bold shrink-0">
+                    v{getWorkspaceMetadata(session).version}
+                  </span>
+                  <Edit3 className="w-3 h-3 text-zinc-400 ml-0.5 hover:text-white shrink-0" />
+                </button>
+
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800/90 border border-zinc-700 text-xs font-mono text-zinc-200">
                   <FileArchive className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <span className="text-zinc-400">JAR:</span>
-                  <span className="font-semibold text-zinc-100 max-w-[180px] sm:max-w-xs truncate">
+                  <span className="font-semibold text-zinc-100 max-w-[140px] sm:max-w-xs truncate">
                     {session.jarInfo.fileName}
                   </span>
                 </div>
@@ -613,30 +738,53 @@ export default function App() {
                     ? 'Đã khôi phục'
                     : 'Tự lưu'}
                 </div>
-                <button
-                  id="export-workspace-jar-button"
-                  type="button"
-                  onClick={() => void handleExportWorkspaceJar()}
-                  disabled={isBuildingDraftTest}
-                  className="px-3 py-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 rounded flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Dựng, kiểm tra và tải JAR chứa toàn bộ thay đổi trong workspace"
-                >
-                  {isBuildingDraftTest ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Download className="w-3.5 h-3.5" />
-                  )}
-                  <span>{isBuildingDraftTest ? 'Đang dựng...' : 'Xuất file JAR'}</span>
-                </button>
+
+                <div className="flex items-center shrink-0">
+                  <button
+                    id="export-workspace-jar-button"
+                    type="button"
+                    onClick={() => void handleExportWorkspaceJar()}
+                    disabled={isBuildingDraftTest}
+                    className="px-2.5 sm:px-3 py-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 rounded-l flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={`Dựng và tải JAR: ${resolveExportFileName(getWorkspaceMetadata(session))}`}
+                  >
+                    {isBuildingDraftTest ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5 shrink-0" />
+                    )}
+                    <span>
+                      {isBuildingDraftTest ? (
+                        'Đang dựng...'
+                      ) : (
+                        <>
+                          <span className="hidden sm:inline">Xuất JAR (v{getWorkspaceMetadata(session).version})</span>
+                          <span className="sm:hidden">Xuất v{getWorkspaceMetadata(session).version}</span>
+                        </>
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    id="header-metadata-quick-toggle"
+                    type="button"
+                    onClick={() => setShowMetadataModal(true)}
+                    className="px-2 py-1 text-xs text-emerald-200 hover:text-white bg-emerald-700 hover:bg-emerald-600 border-y border-r border-emerald-500 rounded-r flex items-center transition-colors cursor-pointer"
+                    title="Cấu hình Tên file, Tác giả & Phiên bản"
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
                 <button
                   id="close-jar-button"
                   type="button"
                   onClick={handleCloseJar}
-                  className="px-3 py-1 text-xs font-medium text-red-300 hover:text-red-200 bg-red-950/40 hover:bg-red-950/70 border border-red-800/60 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
+                  className="px-2 sm:px-3 py-1 text-xs font-medium text-red-300 hover:text-red-200 bg-red-950/40 hover:bg-red-950/70 border border-red-800/60 rounded flex items-center gap-1 transition-colors cursor-pointer shrink-0"
                   title="Đóng file JAR và giải phóng bộ nhớ"
                 >
-                  <XCircle className="w-3.5 h-3.5" />
-                  <span>[ Đóng JAR ]</span>
+                  <XCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">[ Đóng JAR ]</span>
+                  <span className="sm:hidden">Đóng</span>
                 </button>
               </div>
             ) : (
@@ -645,6 +793,32 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Thông báo xuất file thành công */}
+      {exportNotice && (
+        <div className="bg-emerald-600 text-white px-4 py-2 text-xs flex items-center justify-between shadow-md animate-in fade-in duration-150 shrink-0">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-200 shrink-0" />
+            <span>
+              Đã xuất và tải về file: <strong className="font-mono">{exportNotice.fileName}</strong> (Phiên bản: <strong className="font-mono">v{exportNotice.version}</strong>).
+              {exportNotice.nextVersion && (
+                <span className="ml-2 bg-emerald-700 px-2 py-0.5 rounded font-mono text-[11px] inline-flex items-center gap-1">
+                  <span>Phiên bản tiếp theo:</span>
+                  <strong className="text-emerald-100">v{exportNotice.nextVersion}</strong>
+                </span>
+              )}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setExportNotice(null)}
+            className="text-emerald-200 hover:text-white ml-3 cursor-pointer"
+            title="Đóng"
+          >
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Khu vực nội dung chính */}
       <main className={`flex-1 min-h-0 w-full ${session ? 'px-2 xl:px-3 py-2 overflow-hidden' : 'max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6 overflow-auto'}`}>
@@ -667,292 +841,28 @@ export default function App() {
             )}
           </div>
         ) : (
-          <div className="h-full min-h-0 flex flex-col gap-2">
-            {/* Thanh chuyển tab */}
-            <div className="shrink-0 flex items-center gap-2">
-              <div className="min-w-0 flex-1 flex items-center gap-0.5 bg-white p-1 rounded-lg border border-zinc-200 overflow-x-auto shadow-sm">
-                <button
-                  id="tab-overview"
-                  type="button"
-                  onClick={() => setActiveTab('overview')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'overview'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <LayoutDashboard className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Tổng quan</span>
-                </button>
-
-                <button
-                  id="tab-game-data"
-                  type="button"
-                  onClick={() => setActiveTab('game-data')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'game-data'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Database className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Dữ liệu</span>
-                  {dirtyNpcCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold animate-pulse">
-                      {dirtyNpcCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  id="tab-maps"
-                  type="button"
-                  onClick={() => setActiveTab('maps')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'maps'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <MapPinned className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Map</span>
-                  {dirtyMapCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold animate-pulse">
-                      {dirtyMapCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  id="tab-characters"
-                  type="button"
-                  onClick={() => setActiveTab('characters')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'characters'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <UserRound className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Nhân vật</span>
-                  {dirtyCharacterCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold animate-pulse">
-                      {dirtyCharacterCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  id="tab-skills"
-                  type="button"
-                  onClick={() => setActiveTab('skills')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'skills'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-fuchsia-500" />
-                  <span>Kỹ năng</span>
-                  {dirtySkillCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-fuchsia-500/20 text-fuchsia-700 border border-fuchsia-300 font-bold animate-pulse">
-                      {dirtySkillCount}
-                    </span>
-                  )}
-                </button>
-
-
-                <button
-                  id="tab-mobs"
-                  type="button"
-                  onClick={() => setActiveTab('mobs')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'mobs'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Bug className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Quái</span>
-                  {dirtyMobCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/40 font-bold animate-pulse">
-                      {dirtyMobCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  id="tab-bosses"
-                  type="button"
-                  onClick={() => setActiveTab('bosses')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'bosses'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Crown className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Boss</span>
-                  {dirtyBossCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold animate-pulse">
-                      {dirtyBossCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  id="tab-mechanics"
-                  type="button"
-                  onClick={() => setActiveTab('mechanics')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'mechanics'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-violet-400" />
-                  <span>Cơ chế</span>
-                  {dirtyMechanicCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/40 font-bold animate-pulse">
-                      {dirtyMechanicCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  id="tab-explorer"
-                  type="button"
-                  onClick={() => setActiveTab('explorer')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'explorer'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Compass className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Duyệt JAR</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-950 text-zinc-400 border border-zinc-800">
-                    {session.entries.length.toLocaleString('vi-VN')}
-                  </span>
-                </button>
-
-                <button
-                  id="tab-items"
-                  type="button"
-                  onClick={() => setActiveTab('items')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'items'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Package className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Vật phẩm</span>
-                  {dirtyItemCount > 0 ? (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold animate-pulse">
-                      {dirtyItemCount}
-                    </span>
-                  ) : (
-                    session.itemAnalysis && (
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-950 text-amber-400 border border-zinc-800">
-                        {session.itemAnalysis.items.length.toLocaleString('vi-VN')}
-                      </span>
-                    )
-                  )}
-                </button>
-
-                <button
-                  id="tab-multiplayer"
-                  type="button"
-                  onClick={() => setActiveTab('multiplayer')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'multiplayer'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Network className="w-3.5 h-3.5 text-cyan-500" />
-                  <span>Multiplayer</span>
-                  {session.candidateOutput?.status === 'VALIDATED' &&
-                    (session.candidateOutput?.metrics?.source === 'MULTIPLAYER_LITE' ||
-                      (session.candidateOutput?.metrics?.source === 'UNIFIED_WORKSPACE' &&
-                        session.candidateOutput?.metrics?.multiplayerLite)) && (
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-100 text-cyan-700 border border-cyan-200 font-bold">
-                        Ready
-                      </span>
-                    )}
-                </button>
-
-                <button
-                  id="test-drafts-button"
-                  type="button"
-                  onClick={() => {
-                    void handleTestDraft(true);
-                  }}
-                  disabled={isBuildingDraftTest || totalDirtyDrafts === 0}
-                  className="px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer bg-violet-500/10 border border-violet-500/30 text-violet-600 hover:bg-violet-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
-                  title={
-                    totalDirtyDrafts === 0
-                      ? 'Chưa có nháp / operation để test'
-                      : 'Hợp nhất toàn bộ nháp + Item mới + Multiplayer thành một JAR test'
-                  }
-                >
-                  {isBuildingDraftTest ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <PlayCircle className="w-3.5 h-3.5" />
-                  )}
-                  <span>
-                    {isBuildingDraftTest
-                      ? draftTestProgress?.label || 'Đang dựng...'
-                      : 'Test Workspace'}
-                  </span>
-                  {totalDirtyDrafts > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-violet-100 text-violet-700 border border-violet-200 font-bold">
-                      {totalDirtyDrafts}
-                    </span>
-                  )}
-                  {workspaceOperationCount > 0 && (
-                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
-                      WS {workspaceOperationCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  id="tab-test-game"
-                  type="button"
-                  onClick={() => setActiveTab('test')}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
-                    activeTab === 'test'
-                      ? 'bg-zinc-800 text-zinc-100 font-semibold shadow-sm border border-zinc-700'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
-                  }`}
-                >
-                  <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Chạy thử</span>
-                  {session.candidateOutput?.status === 'VALIDATED' && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/40 font-bold">
-                      {session.candidateOutput?.metrics?.source === 'UNIFIED_WORKSPACE'
-                        ? 'Workspace'
-                        : session.candidateOutput?.metrics?.source === 'DRAFT_TEST'
-                        ? 'Nháp'
-                        : session.candidateOutput?.metrics?.source === 'MULTIPLAYER_LITE'
-                        ? 'Multi'
-                        : 'Đã vá'}
-                    </span>
-                  )}
-                  {session.candidateOutput?.status === 'STALE' &&
-                    ['DRAFT_TEST', 'UNIFIED_WORKSPACE'].includes(session.candidateOutput?.metrics?.source) && (
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-700 border border-amber-200 font-bold">
-                        Workspace cũ
-                      </span>
-                    )}
-                </button>
-              </div>
-
-
-            </div>
+          <div className="h-full min-h-0 flex flex-col gap-2 pb-14 md:pb-0 w-full min-w-0 max-w-full">
+            {/* Thanh chuyển tab tương thích tối ưu Desktop & Mobile */}
+            <AppTabNavigation
+              session={session}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              dirtyCounts={{
+                items: dirtyItemCount,
+                npcs: dirtyNpcCount,
+                maps: dirtyMapCount,
+                mobs: dirtyMobCount,
+                characters: dirtyCharacterCount,
+                skills: dirtySkillCount,
+                bosses: dirtyBossCount,
+                mechanics: dirtyMechanicCount,
+              }}
+              totalDirtyDrafts={totalDirtyDrafts}
+              workspaceOperationCount={workspaceOperationCount}
+              isBuildingDraftTest={isBuildingDraftTest}
+              draftTestProgress={draftTestProgress}
+              onTestDraft={() => void handleTestDraft(true)}
+            />
 
             <PatchWorkspaceBar
               session={session}
@@ -960,75 +870,55 @@ export default function App() {
             />
 
             {/* Nội dung từng tab */}
-            <div className={`min-h-0 flex-1 ${
+            <div className={`min-h-0 flex-1 w-full min-w-0 max-w-full ${
               activeTab === 'bosses' || activeTab === 'maps' || activeTab === 'mobs' || activeTab === 'characters' || activeTab === 'skills' || activeTab === 'multiplayer'
-                ? 'overflow-hidden'
+                ? 'overflow-auto md:overflow-hidden'
                 : 'overflow-auto'
             }`}>
             {activeTab === 'overview' ? (
               <div className="space-y-5">
                 <JarInfoPanel jarInfo={session.jarInfo} />
-                <ManifestPanel manifest={session.jarInfo.manifest} />
+                <ManifestPanel
+                  manifest={session.jarInfo.manifest}
+                  session={session}
+                  onMetadataChanged={() => setPatchWorkspaceRevision((v) => v + 1)}
+                />
               </div>
             ) : activeTab === 'game-data' ? (
               <GameDataPanel
                 session={session}
-                onNpcDraftsUpdated={(count) => {
-                  setDirtyNpcCount(count);
-                  persistDraftChange({ npcs: count });
-                }}
+                onNpcDraftsUpdated={handleNpcDraftsUpdated}
               />
             ) : activeTab === 'maps' ? (
               <MapPanel
                 session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtyMapCount(count);
-                  persistDraftChange({ maps: count });
-                }}
-                onBossDraftsUpdated={(count) => {
-                  setDirtyBossCount(count);
-                  persistDraftChange({ bosses: count });
-                }}
+                onDraftsUpdated={handleMapDraftsUpdated}
+                onBossDraftsUpdated={handleBossDraftsUpdated}
               />
             ) : activeTab === 'mobs' ? (
               <MobPanel
                 session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtyMobCount(count);
-                  persistDraftChange({ mobs: count });
-                }}
+                onDraftsUpdated={handleMobDraftsUpdated}
               />
             ) : activeTab === 'characters' ? (
               <CharacterPanel
                 session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtyCharacterCount(count);
-                  persistDraftChange({ characters: count });
-                }}
+                onDraftsUpdated={handleCharacterDraftsUpdated}
               />
             ) : activeTab === 'skills' ? (
               <SkillPanel
                 session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtySkillCount(count);
-                  persistDraftChange({ skills: count });
-                }}
+                onDraftsUpdated={handleSkillDraftsUpdated}
               />
             ) : activeTab === 'bosses' ? (
               <BossPanel
                 session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtyBossCount(count);
-                  persistDraftChange({ bosses: count });
-                }}
+                onDraftsUpdated={handleBossDraftsUpdated}
               />
             ) : activeTab === 'mechanics' ? (
               <GameMechanicsPanel
                 session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtyMechanicCount(count);
-                  persistDraftChange({ mechanics: count });
-                }}
+                onDraftsUpdated={handleMechanicDraftsUpdated}
               />
             ) : activeTab === 'multiplayer' ? (
               <MultiplayerPanel
@@ -1046,10 +936,7 @@ export default function App() {
             ) : activeTab === 'items' ? (
               <ItemsBrowser
                 session={session}
-                onDraftsUpdated={(count) => {
-                  setDirtyItemCount(count);
-                  persistDraftChange({ items: count });
-                }}
+                onDraftsUpdated={handleItemDraftsUpdated}
                 onWorkspaceUpdated={handlePatchWorkspaceUpdated}
                 onNavigateToTestGame={(src) => {
                   setTestGameSource(src);
@@ -1226,6 +1113,14 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {showMetadataModal && session && (
+        <MetadataVersionModal
+          session={session}
+          onClose={() => setShowMetadataModal(false)}
+          onSaved={() => setPatchWorkspaceRevision((v) => v + 1)}
+        />
       )}
     </div>
   );

@@ -41,6 +41,11 @@ import {
   importPatchWorkspaceOperations,
   PatchWorkspaceOperation,
 } from './patchWorkspaceStateService';
+import {
+  exportWorkspaceMetadata,
+  importWorkspaceMetadata,
+  WorkspaceMetadata,
+} from './workspaceMetadataService';
 
 const DB_NAME = 'nro-studio-workspace';
 const DB_VERSION = 1;
@@ -89,6 +94,7 @@ interface PersistedDraftSnapshot {
   skillDrafts: Array<[number, SkillDraft]>;
   partDrafts: Array<[number, PartDraft]>;
   patchWorkspaceOperations: PatchWorkspaceOperation[];
+  metadata?: WorkspaceMetadata;
   counts: WorkspaceDirtyCounts;
   savedAt: number;
 }
@@ -290,6 +296,7 @@ function buildDraftSnapshot(
     skillDrafts: exportSkillDrafts(session),
     partDrafts: exportPartDrafts(session),
     patchWorkspaceOperations: exportPatchWorkspaceOperations(session),
+    metadata: exportWorkspaceMetadata(session),
     counts: cloneCounts(counts),
     savedAt: Date.now(),
   };
@@ -367,6 +374,9 @@ export async function restoreWorkspaceDrafts(
     session,
     snapshot.patchWorkspaceOperations ?? []
   );
+  if (snapshot.metadata) {
+    importWorkspaceMetadata(session, snapshot.metadata);
+  }
 
   // candidateOutput cố ý không restore: JAR test phải build lại từ draft hiện tại.
   session.candidateOutput = undefined;

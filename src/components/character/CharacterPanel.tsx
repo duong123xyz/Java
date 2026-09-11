@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   UserRound,
   RefreshCw,
@@ -68,6 +68,9 @@ export function CharacterPanel({
     }
   };
 
+  const onDraftsUpdatedRef = useRef(onDraftsUpdated);
+  onDraftsUpdatedRef.current = onDraftsUpdated;
+
   useEffect(() => {
     load();
   }, [session]);
@@ -75,8 +78,8 @@ export function CharacterPanel({
   useEffect(() => {
     if (!snapshot) return;
     void revision;
-    onDraftsUpdated?.(getDirtyCharacterCount(session, snapshot.profiles));
-  }, [session, snapshot, revision, onDraftsUpdated]);
+    onDraftsUpdatedRef.current?.(getDirtyCharacterCount(session, snapshot.profiles));
+  }, [session, snapshot, revision]);
 
   const selectedProfile = useMemo(() => {
     return snapshot?.profiles.find((profile) => profile.planet === selectedPlanet) ?? null;

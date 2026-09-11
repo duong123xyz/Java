@@ -22,6 +22,11 @@ import {
   WorkspaceQuestPatchOperation,
   WorkspaceNewBossOperation,
 } from './patchWorkspaceStateService';
+import {
+  getWorkspaceMetadata,
+  resolveExportFileName,
+  updateManifestContent,
+} from './workspaceMetadataService';
 
 const SMALL_IMAGE_INDEX_PATH = 'x1/smallimage.idx';
 const SMALL_IMAGE_MAGIC = 0x53495032; // SIP2
@@ -520,6 +525,25 @@ export async function buildUnifiedWorkspaceCandidate(
       });
     }
 
+    const metadata = getWorkspaceMetadata(session);
+    const originalManifest =
+      (await session.zip.file('META-INF/MANIFEST.MF')?.async('string')) ?? '';
+    const expectedManifest = updateManifestContent(originalManifest, {
+      gameName: metadata.gameName,
+      author: metadata.author,
+      version: metadata.version,
+    });
+
+    if (expectedManifest !== originalManifest) {
+      const manifestZip = await JSZip.loadAsync(await currentBlob.arrayBuffer());
+      manifestZip.file('META-INF/MANIFEST.MF', expectedManifest);
+      currentBlob = await manifestZip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      });
+    }
+
     onProgress?.({
       phase: 'VERIFYING',
       label: 'Đang mở lại JAR hợp nhất và kiểm tra manifest / ZIP...',
@@ -528,12 +552,10 @@ export async function buildUnifiedWorkspaceCandidate(
     });
 
     const reopened = await JSZip.loadAsync(await currentBlob.arrayBuffer());
-    const originalManifest =
-      (await session.zip.file('META-INF/MANIFEST.MF')?.async('string')) ?? '';
     const finalManifest =
       (await reopened.file('META-INF/MANIFEST.MF')?.async('string')) ?? '';
 
-    if (originalManifest !== finalManifest) {
+    if (finalManifest !== expectedManifest && finalManifest !== originalManifest) {
       return {
         status: 'FAILED',
         blockers: [],
@@ -596,7 +618,7 @@ export async function buildUnifiedWorkspaceCandidate(
 
     const candidate: CandidateOutputJar = {
       blob: currentBlob,
-      fileName: outputName(session.jarInfo.fileName),
+      fileName: resolveExportFileName(metadata),
       status: 'VALIDATED',
       validatedAt: Date.now(),
       expectedModifiedCount:

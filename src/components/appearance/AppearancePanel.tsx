@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -111,11 +111,14 @@ export function AppearancePanel({
     };
   }, [session]);
 
+  const onDraftsUpdatedRef = useRef(onDraftsUpdated);
+  onDraftsUpdatedRef.current = onDraftsUpdated;
+
   useEffect(() => {
     if (!snapshot) return;
     void revision;
-    onDraftsUpdated?.(getDirtyPartCount(session, snapshot.parts));
-  }, [session, snapshot, revision, onDraftsUpdated]);
+    onDraftsUpdatedRef.current?.(getDirtyPartCount(session, snapshot.parts));
+  }, [session, snapshot, revision]);
 
   const visibleParts = useMemo(() => {
     if (!snapshot) return [];

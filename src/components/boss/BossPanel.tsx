@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -57,6 +57,7 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
   const [filter, setFilter] = useState<BossFilter>('all');
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [selectedQueuedId, setSelectedQueuedId] = useState<string | null>(null);
+  const [mobileTab, setMobileTab] = useState<'list' | 'detail'>('list');
   const [revision, setRevision] = useState(0);
   const [showCreator, setShowCreator] = useState(false);
 
@@ -75,11 +76,14 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
     }
   };
 
+  const onDraftsUpdatedRef = useRef(onDraftsUpdated);
+  onDraftsUpdatedRef.current = onDraftsUpdated;
+
   useEffect(() => { void load(); }, [session]);
   useEffect(() => {
     void revision;
-    onDraftsUpdated?.(totalDirty(session));
-  }, [session, revision, onDraftsUpdated]);
+    onDraftsUpdatedRef.current?.(totalDirty(session));
+  }, [session, revision]);
 
   const queued = useMemo(() => {
     void revision;
@@ -114,7 +118,7 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-2">
-      <style>{`.Label{display:block;margin-bottom:4px;font-size:9px;text-transform:uppercase;color:#71717a;font-family:ui-monospace,monospace}.Input{width:100%;border:1px solid #3f3f46;background:#09090b;border-radius:6px;padding:7px 9px;font-size:11px;color:#f4f4f5;outline:none}.Input:focus{border-color:#f43f5e}`}</style>
+      <style>{`.Label{display:block;margin-bottom:4px;font-size:9px;text-transform:uppercase;color:#71717a;font-family:ui-monospace,monospace}.Input{width:100%;border:1px solid #3f3f46;background:#09090b;border-radius:6px;padding:9px 10px;font-size:16px;color:#f4f4f5;outline:none}.Input:focus{border-color:#f43f5e}.CreatorLabel{display:block;margin-bottom:4px;font-size:9px;text-transform:uppercase;color:#52525b;font-family:ui-monospace,monospace}.CreatorInput{width:100%;border:1px solid #d4d4d8;background:#fff;border-radius:6px;padding:9px 10px;font-size:16px;color:#18181b;outline:none;color-scheme:light}.CreatorInput::placeholder{color:#a1a1aa}.CreatorInput:focus{border-color:#f43f5e;box-shadow:0 0 0 2px rgba(244,63,94,.10)}.CreatorInput:disabled,.CreatorInput[readonly]{background:#f4f4f5;color:#52525b;border-color:#e4e4e7;cursor:not-allowed}.CreatorInput option{background:#fff;color:#18181b}@media(min-width:640px){.Input{padding:7px 9px;font-size:11px}.CreatorInput{padding:7px 9px;font-size:11px}}`}</style>
       <div className="shrink-0 min-h-11 px-3 py-2 bg-zinc-900/90 border border-zinc-800 rounded-lg flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <Crown className="w-4 h-4 text-rose-400" />
@@ -128,12 +132,43 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
         </button>
       </div>
 
+      {/* Segmented bar trên Mobile */}
+      <div className="flex xl:hidden items-center gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-xl shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileTab('list')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'list'
+              ? 'bg-rose-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Crown className="w-3.5 h-3.5" />
+          <span>Danh sách ({filtered.length + queued.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('detail')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'detail'
+              ? 'bg-rose-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <span className="truncate max-w-[150px]">
+            {selectedQueued ? selectedQueued.name : selectedBoss ? selectedBoss.name : 'Chi tiết Boss'}
+          </span>
+        </button>
+      </div>
+
       <div className="min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[330px_minmax(0,1fr)] gap-2">
-        <aside className="min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden flex flex-col">
+        <aside className={`min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden flex flex-col ${
+          mobileTab === 'detail' ? 'hidden xl:flex' : 'flex'
+        }`}>
           <div className="p-2 border-b border-zinc-800 bg-zinc-950/50 space-y-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tên, map, char ID..." className="w-full bg-zinc-950 border border-zinc-700 rounded-md pl-8 pr-2 py-1.5 text-[11px] text-zinc-100 focus:outline-none focus:border-rose-500" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tên, map, char ID..." className="w-full bg-zinc-950 border border-zinc-700 rounded-md pl-8 pr-2 py-2 sm:py-1.5 text-[16px] sm:text-[11px] text-zinc-100 focus:outline-none focus:border-rose-500 font-mono" />
             </div>
             <div className="flex gap-1 overflow-x-auto">
               {(['all','fixed','dynamic','with-drop'] as BossFilter[]).map((key) => (
@@ -147,7 +182,7 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
           <div className="min-h-0 flex-1 overflow-y-auto">
             {queued.length > 0 && <div className="px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wide text-emerald-500 bg-emerald-950/10 border-b border-zinc-800">Boss mới trong Workspace</div>}
             {queued.map((boss) => (
-              <button key={boss.id} type="button" onClick={() => { setSelectedQueuedId(boss.id); setSelectedIndex(null); }} className={`w-full h-[58px] px-2.5 text-left border-b border-zinc-800/70 cursor-pointer ${selectedQueuedId === boss.id ? 'bg-emerald-500/10 border-l-2 border-l-emerald-400' : 'hover:bg-zinc-800/60'}`}>
+              <button key={boss.id} type="button" onClick={() => { setSelectedQueuedId(boss.id); setSelectedIndex(null); setMobileTab('detail'); }} className={`w-full h-[58px] px-2.5 text-left border-b border-zinc-800/70 cursor-pointer ${selectedQueuedId === boss.id ? 'bg-emerald-500/10 border-l-2 border-l-emerald-400' : 'hover:bg-zinc-800/60'}`}>
                 <div className="h-full flex items-center gap-2">
                   <Plus className="w-3 h-3 text-emerald-400" />
                   <div className="min-w-0 flex-1"><div className="text-[11px] font-semibold text-zinc-100 truncate">{boss.name}</div><div className="text-[9px] text-zinc-500 font-mono">map {boss.mapId} · char {boss.charId}</div></div>
@@ -160,7 +195,7 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
               const draft = getBossDraft(session, boss);
               const dirty = isBossDraftDirty(boss, draft);
               return (
-                <button key={boss.index} type="button" onClick={() => { setSelectedIndex(boss.index); setSelectedQueuedId(null); }} className={`w-full h-[58px] px-2.5 text-left border-b border-zinc-800/70 cursor-pointer ${selectedIndex === boss.index ? 'bg-rose-500/10 border-l-2 border-l-rose-400' : 'hover:bg-zinc-800/60'}`}>
+                <button key={boss.index} type="button" onClick={() => { setSelectedIndex(boss.index); setSelectedQueuedId(null); setMobileTab('detail'); }} className={`w-full h-[58px] px-2.5 text-left border-b border-zinc-800/70 cursor-pointer ${selectedIndex === boss.index ? 'bg-rose-500/10 border-l-2 border-l-rose-400' : 'hover:bg-zinc-800/60'}`}>
                   <div className="h-full flex items-center gap-2"><span className="w-7 text-[9px] text-rose-400 font-mono">#{boss.index}</span><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold text-zinc-100 truncate">{draft.name}{dirty ? ' •' : ''}</div><div className="text-[9px] text-zinc-500 font-mono">map {boss.mapId} · char {boss.charId}</div></div><ChevronRight className="w-3 h-3 text-zinc-600" /></div>
                 </button>
               );
@@ -168,7 +203,23 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
           </div>
         </aside>
 
-        <section className="min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden">
+        <section className={`min-h-0 bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden flex flex-col ${
+          mobileTab === 'list' ? 'hidden xl:flex' : 'flex'
+        }`}>
+          {/* Header quay lại trên mobile */}
+          <div className="xl:hidden px-3 py-2 bg-zinc-850 border-b border-zinc-800 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setMobileTab('list')}
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4 rotate-180" />
+              <span>← Trở lại danh sách</span>
+            </button>
+            <span className="text-xs font-mono text-zinc-400 truncate max-w-[140px]">
+              {selectedQueued?.name || selectedBoss?.name}
+            </span>
+          </div>
           {selectedQueued ? (
             <QueuedBossDetail session={session} boss={selectedQueued} onDelete={() => { removePatchWorkspaceOperation(session, selectedQueued.id); setSelectedQueuedId(null); setRevision((v) => v + 1); }} />
           ) : selectedBoss ? (
@@ -220,32 +271,41 @@ function BossCreatorModal({ session, snapshot, onClose, onCreated }: { session: 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl flex flex-col">
-        <div className="h-12 px-4 border-b border-zinc-800 flex items-center justify-between"><div className="flex items-center gap-2"><Crown className="w-4 h-4 text-rose-400" /><strong className="text-sm text-zinc-100">Tạo boss thật</strong><span className="text-[9px] text-emerald-400 font-mono">ghi vào a/a/d.class</span></div><button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="w-4 h-4" /></button></div>
-        <div className="p-4 overflow-y-auto space-y-4">
-          <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/15 p-3 text-[10px] text-emerald-300 leading-relaxed">Boss mới được thêm vào boss manager thật, không phải chỉ hiện trên panel. Writer tự hook map gate để char ID mới có thể spawn ở map đã chọn.</div>
+    <div className="fixed inset-0 z-50 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl flex flex-col">
+        <div className="h-12 px-4 border-b border-zinc-200 bg-white flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Crown className="w-4 h-4 text-rose-500" />
+            <strong className="text-sm text-zinc-900">Tạo boss thật</strong>
+            <span className="text-[9px] text-emerald-600 font-mono">ghi vào a/a/d.class</span>
+          </div>
+          <button type="button" onClick={onClose} className="p-1 rounded text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-rose-200">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-4 overflow-y-auto space-y-4 bg-zinc-50/50">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[10px] text-emerald-700 leading-relaxed">Boss mới được thêm vào boss manager thật, không phải chỉ hiện trên panel. Writer tự hook map gate để char ID mới có thể spawn ở map đã chọn.</div>
           <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-4">
             <div className="space-y-3">
               <NpcBodyPreview session={session} head={head} body={body} leg={leg} alt={name} title="Preview boss mới" compact />
-              <label className="block"><span className="Label">Clone boss nền</span><select value={cloneIndex} onChange={(e) => applyClone(Number(e.target.value))} className="Input">{snapshot.bosses.map((boss) => <option key={boss.index} value={boss.index}>#{boss.index} · {boss.name}</option>)}</select></label>
+              <label className="block"><span className="CreatorLabel">Clone boss nền</span><select value={cloneIndex} onChange={(e) => applyClone(Number(e.target.value))} className="CreatorInput">{snapshot.bosses.map((boss) => <option key={boss.index} value={boss.index}>#{boss.index} · {boss.name}</option>)}</select></label>
               <div className="text-[9px] text-zinc-500">Clone chỉ dùng để lấy nhanh ngoại hình / HP / damage / map. Boss mới vẫn có char ID riêng.</div>
             </div>
             <div className="grid grid-cols-2 gap-3 content-start">
-              <label><span className="Label">Tên boss</span><input value={name} onChange={(e) => setName(e.target.value)} className="Input" /></label>
-              <label><span className="Label">Char ID mới</span><div className="flex gap-1"><input type="number" value={charId} onChange={(e) => setCharId(Math.round(Number(e.target.value)))} className={`Input ${duplicated ? '!border-red-500' : ''}`} /><button type="button" onClick={() => setCharId(allocateId())} className="px-2 rounded bg-zinc-800 border border-zinc-700 text-[9px] text-zinc-300 whitespace-nowrap">Tự cấp</button></div><div className={`mt-1 text-[9px] ${duplicated ? 'text-red-400' : 'text-emerald-400'}`}>{duplicated ? 'ID đang bị trùng' : 'ID đang trống'}</div></label>
-              <Num label="Map ID" value={mapId} onChange={setMapId} min={0} />
-              <Num label="Spawn X" value={spawnX} onChange={setSpawnX} min={0} />
-              <Num label="HP" value={hp} onChange={setHp} min={1} />
-              <Num label="Sát thương" value={damage} onChange={setDamage} min={1} />
-              <Num label="Head" value={head} onChange={setHead} min={0} />
-              <Num label="Body" value={body} onChange={setBody} min={0} />
-              <Num label="Leg" value={leg} onChange={setLeg} min={0} />
+              <label><span className="CreatorLabel">Tên boss</span><input value={name} onChange={(e) => setName(e.target.value)} className="CreatorInput" /></label>
+              <label><span className="CreatorLabel">Char ID mới</span><div className="flex gap-1"><input type="number" value={charId} onChange={(e) => setCharId(Math.round(Number(e.target.value)))} className={`CreatorInput ${duplicated ? '!border-red-400' : ''}`} /><button type="button" onClick={() => setCharId(allocateId())} className="px-2 rounded bg-white border border-zinc-300 text-[9px] text-zinc-700 whitespace-nowrap hover:bg-zinc-50 focus:outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100">Tự cấp</button></div><div className={`mt-1 text-[9px] ${duplicated ? 'text-red-500' : 'text-emerald-600'}`}>{duplicated ? 'ID đang bị trùng' : 'ID đang trống'}</div></label>
+              <CreatorNum label="Map ID" value={mapId} onChange={setMapId} min={0} />
+              <CreatorNum label="Spawn X" value={spawnX} onChange={setSpawnX} min={0} />
+              <CreatorNum label="HP" value={hp} onChange={setHp} min={1} />
+              <CreatorNum label="Sát thương" value={damage} onChange={setDamage} min={1} />
+              <CreatorNum label="Head" value={head} onChange={setHead} min={0} />
+              <CreatorNum label="Body" value={body} onChange={setBody} min={0} />
+              <CreatorNum label="Leg" value={leg} onChange={setLeg} min={0} />
             </div>
           </div>
-          {error && <div className="rounded-lg border border-red-800 bg-red-950/20 p-2 text-[10px] text-red-300">{error}</div>}
+          {error && <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-[10px] text-red-600">{error}</div>}
         </div>
-        <div className="p-3 border-t border-zinc-800 flex justify-end gap-2"><button onClick={onClose} className="px-3 py-1.5 rounded border border-zinc-700 text-[10px] text-zinc-300">Hủy</button><button onClick={create} disabled={duplicated || !name.trim()} className="px-4 py-1.5 rounded bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-[10px] font-bold flex items-center gap-1.5"><Plus className="w-3 h-3" />Thêm vào Workspace</button></div>
+        <div className="p-3 border-t border-zinc-200 bg-white flex justify-end gap-2"><button type="button" onClick={onClose} className="px-3 py-1.5 rounded border border-zinc-300 bg-white text-[10px] text-zinc-700 hover:bg-zinc-50 focus:outline-none focus:border-rose-400">Hủy</button><button type="button" onClick={create} disabled={duplicated || !name.trim()} className="px-4 py-1.5 rounded bg-rose-600 hover:bg-rose-500 disabled:bg-zinc-200 disabled:text-zinc-500 disabled:cursor-not-allowed text-white text-[10px] font-bold flex items-center gap-1.5"><Plus className="w-3 h-3" />Thêm vào Workspace</button></div>
       </div>
     </div>
   );
@@ -274,4 +334,5 @@ function Chip({ children }: { children: React.ReactNode }) { return <span classN
 function Box({ label, value }: { label:string; value:string|number }) { return <div className="p-2 rounded bg-zinc-950 border border-zinc-800"><div className="text-[8px] uppercase text-zinc-600">{label}</div><div className="text-[11px] text-zinc-200 font-mono">{value}</div></div>; }
 function Text({ label,value,onChange }:{label:string;value:string;onChange:(v:string)=>void}) { return <label><span className="Label">{label}</span><input value={value} onChange={(e)=>onChange(e.target.value)} className="Input"/></label>; }
 function Num({ label,value,onChange,min }:{label:string;value:number;onChange:(v:number)=>void;min?:number}) { return <label><span className="Label">{label}</span><input type="number" min={min} value={value} onChange={(e)=>onChange(Math.round(Number(e.target.value)||0))} className="Input"/></label>; }
+function CreatorNum({ label,value,onChange,min }:{label:string;value:number;onChange:(v:number)=>void;min?:number}) { return <label><span className="CreatorLabel">{label}</span><input type="number" min={min} value={value} onChange={(e)=>onChange(Math.round(Number(e.target.value)||0))} className="CreatorInput"/></label>; }
 function NullableNum({label,value,placeholder,onChange}:{label:string;value:number|null;placeholder:string;onChange:(v:number|null)=>void}) { return <label><span className="Label">{label}</span><input type="number" min={1} value={value ?? ''} placeholder={placeholder} onChange={(e)=>onChange(e.target.value===''?null:Math.max(1,Math.round(Number(e.target.value)||1)))} className="Input"/></label>; }

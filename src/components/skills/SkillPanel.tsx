@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -74,6 +74,9 @@ export function SkillPanel({ session, onDraftsUpdated }: SkillPanelProps) {
     }
   };
 
+  const onDraftsUpdatedRef = useRef(onDraftsUpdated);
+  onDraftsUpdatedRef.current = onDraftsUpdated;
+
   useEffect(() => {
     void load();
   }, [session]);
@@ -81,8 +84,8 @@ export function SkillPanel({ session, onDraftsUpdated }: SkillPanelProps) {
   useEffect(() => {
     if (!snapshot) return;
     void revision;
-    onDraftsUpdated?.(getDirtySkillCount(session, snapshot.skills));
-  }, [session, snapshot, revision, onDraftsUpdated]);
+    onDraftsUpdatedRef.current?.(getDirtySkillCount(session, snapshot.skills));
+  }, [session, snapshot, revision]);
 
   const visibleSkills = useMemo(() => {
     if (!snapshot) return [];

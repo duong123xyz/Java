@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle,
   Boxes,
   Bug,
   CheckCircle2,
+  ChevronRight,
   Gauge,
   Heart,
   Loader2,
@@ -96,6 +97,7 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   const [dirtyOnly, setDirtyOnly] = useState(false);
   const [spawnFilter, setSpawnFilter] = useState<SpawnFilter>('all');
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
+  const [mobileTab, setMobileTab] = useState<'list' | 'editor'>('list');
   const [revision, setRevision] = useState(0);
   const [dropRules, setDropRules] = useState<MobDropRule[]>([]);
   const [savedRuleId, setSavedRuleId] = useState<string | null>(null);
@@ -151,6 +153,9 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
     };
   }, [session]);
 
+  const onDraftsUpdatedRef = useRef(onDraftsUpdated);
+  onDraftsUpdatedRef.current = onDraftsUpdated;
+
   useEffect(() => {
     if (!snapshot) return;
     void revision;
@@ -159,8 +164,8 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
     // disabled even though V19's runtime writer can build these rules.
     const templateDrafts = getDirtyMobCount(session, snapshot.mobs);
     const dropRuleDrafts = getMobDropRuleCount(session);
-    onDraftsUpdated?.(templateDrafts + dropRuleDrafts);
-  }, [session, snapshot, revision, dropRules, onDraftsUpdated]);
+    onDraftsUpdatedRef.current?.(templateDrafts + dropRuleDrafts);
+  }, [session, snapshot, revision, dropRules]);
 
   const visibleMobs = useMemo(() => {
     if (!snapshot) return [];
@@ -322,8 +327,39 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
         Chọn quái → <strong>Vật phẩm rơi</strong> → gõ tên vật phẩm hoặc ID để chọn. Quantity được lưu đúng theo từng rule.
       </div>
 
+      {/* Segmented bar trên Mobile */}
+      <div className="flex xl:hidden items-center gap-1 bg-zinc-900 border border-zinc-800 p-1 rounded-xl shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileTab('list')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'list'
+              ? 'bg-emerald-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Bug className="w-3.5 h-3.5" />
+          <span>Danh sách ({visibleMobs.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('editor')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'editor'
+              ? 'bg-emerald-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <span className="truncate max-w-[150px]">
+            {selectedMob ? `Quái: ${draft?.name || selectedMob.name}` : 'Soạn thảo'}
+          </span>
+        </button>
+      </div>
+
       <div className="min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-2">
-        <aside className="min-h-0 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col">
+        <aside className={`min-h-0 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col ${
+          mobileTab === 'editor' ? 'hidden xl:flex' : 'flex'
+        }`}>
           <div className="shrink-0 p-2.5 border-b border-zinc-200 space-y-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
@@ -331,7 +367,7 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tìm tên, mob ID, type, map..."
-                className="w-full pl-8 pr-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                className="w-full pl-8 pr-3 py-2 sm:py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 text-[16px] sm:text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 font-mono"
               />
             </div>
             <div className="flex items-center gap-1 overflow-x-auto">
@@ -356,7 +392,10 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                 <button
                   key={mob.rowIndex}
                   type="button"
-                  onClick={() => setSelectedRow(mob.rowIndex)}
+                  onClick={() => {
+                    setSelectedRow(mob.rowIndex);
+                    setMobileTab('editor');
+                  }}
                   className={`w-full rounded-xl border px-2 py-2 text-left transition cursor-pointer ${
                     selected
                       ? 'border-emerald-300 bg-emerald-50'
@@ -389,7 +428,23 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
           </div>
         </aside>
 
-        <section className="min-h-0 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col">
+        <section className={`min-h-0 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col ${
+          mobileTab === 'list' ? 'hidden xl:flex' : 'flex'
+        }`}>
+          {/* Header quay lại trên mobile */}
+          <div className="xl:hidden px-3 py-2 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setMobileTab('list')}
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4 rotate-180" />
+              <span>← Trở lại danh sách ({visibleMobs.length})</span>
+            </button>
+            <span className="text-xs font-mono text-zinc-500 truncate max-w-[140px]">
+              {draft?.name || selectedMob?.name}
+            </span>
+          </div>
           {!selectedMob || !draft ? (
             <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">Chọn một quái để xem chi tiết.</div>
           ) : (
@@ -698,7 +753,7 @@ function ItemPicker({
                 if (event.key === 'Escape') setOpen(false);
               }}
               placeholder="Gõ tên vật phẩm hoặc ID..."
-              className="w-full bg-transparent pl-5 text-[11px] text-zinc-900 placeholder-zinc-400 focus:outline-none"
+              className="w-full bg-transparent pl-5 py-1 text-[16px] sm:text-[11px] text-zinc-900 placeholder-zinc-400 focus:outline-none font-mono"
             />
           </div>
           <div className="mt-0.5 text-[9px] text-zinc-500 font-mono truncate">
@@ -776,7 +831,7 @@ function LabeledInput({ label, value, onChange, placeholder }: { label: string; 
   return (
     <label className="block">
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100" />
+      <input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[16px] sm:text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 font-mono" />
     </label>
   );
 }
@@ -785,7 +840,7 @@ function LabeledNumberInput({ label, value, onChange, step }: { label: string; v
   return (
     <label className="block">
       <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <input type="number" step={step} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100" />
+      <input type="number" step={step} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[16px] sm:text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 font-mono" />
     </label>
   );
 }

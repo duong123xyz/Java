@@ -36,14 +36,21 @@ interface QuestPanelProps {
   onWorkspaceUpdated: () => void;
 }
 
-const STEP_FIELDS = [
+interface StepFieldDef {
+  index: number;
+  label: string;
+  help: string;
+  multiline?: boolean;
+}
+
+const STEP_FIELDS: StepFieldDef[] = [
   { index: 1, label: 'Nội dung bước', help: 'Dòng mục tiêu người chơi nhìn thấy ở bước này.', multiline: true },
-  { index: 2, label: 'Số lượng cần đạt', help: 'max_count — số lần/số lượng cần hoàn thành. Giữ số nguyên nếu logic bước dùng bộ đếm.' },
+  { index: 2, label: 'Số lượng cần đạt', help: 'max_count — số lần/số lượng cần hoàn thành. Giữ số nguyên nếu logic bước dùng bộ đếm.', multiline: false },
   { index: 3, label: 'Thông báo tiến độ', help: 'notify — text thông báo khi tiến độ thay đổi; có thể để trống.', multiline: true },
-  { index: 4, label: 'NPC liên quan', help: 'npc_id — mã NPC của bước. Giá trị âm có thể là sentinel đặc biệt của engine; không đổi nếu chưa chắc.' },
-  { index: 5, label: 'Map liên quan', help: 'map — mã map/điểm nhiệm vụ. -1 thường có nghĩa là không khóa map.' },
-  { index: 6, label: 'Mã điều kiện / hành động', help: 'ducvupro — field kỹ thuật của source nhiệm vụ. Panel giữ raw value để không đoán sai ý nghĩa.' },
-] as const;
+  { index: 4, label: 'NPC liên quan', help: 'npc_id — mã NPC của bước. Giá trị âm có thể là sentinel đặc biệt của engine; không đổi nếu chưa chắc.', multiline: false },
+  { index: 5, label: 'Map liên quan', help: 'map — mã map/điểm nhiệm vụ. -1 thường có nghĩa là không khóa map.', multiline: false },
+  { index: 6, label: 'Mã điều kiện / hành động', help: 'ducvupro — field kỹ thuật của source nhiệm vụ. Panel giữ raw value để không đoán sai ý nghĩa.', multiline: false },
+];
 
 function normalize(text: string): string {
   return String(text || '')
