@@ -80,6 +80,7 @@ const runtime = {
   mainPromise:null,
   jarPath:null,
   appId:null,
+  corePath:null,
 };
 
 function post(type,payload={}) {
@@ -211,15 +212,95 @@ class EventQueue{
   reset(){this.queue.length=0;if(this.waiter){const r=this.waiter;this.waiter=null;r()}}
 }
 const evtQueue=new EventQueue();
+// BẮT BUỘC: libmediabridge.js của FreeJ2ME dùng window.evtQueue để đẩy
+// player-eom / player-video-frame về Java InputListener.
+// Thiếu bridge này làm callback media nổ ngay sau SFX đầu tiên (thường là cú đánh đầu).
+window.evtQueue=evtQueue;
 function mapParentKey(k){return ({[-1]:38,[-2]:40,[-3]:37,[-4]:39,[-5]:13,[-6]:112,[-7]:113,[42]:106,[35]:111})[k]??k}
 function symbolForParentKey(k){return (k>=48&&k<=57)||k===42||k===35?k:0}
 function enqueueParentKey(k,action){
   k=Number(k);
   evtQueue.queueEvent({kind:action==='up'?'keyup':'keydown',args:[mapParentKey(k),symbolForParentKey(k),false,false]});
 }
-const keyboardCodeMap={Enter:13,ArrowLeft:37,ArrowRight:39,ArrowUp:38,ArrowDown:40,F1:112,F2:113,Digit0:48,Digit1:49,Digit2:50,Digit3:51,Digit4:52,Digit5:53,Digit6:54,Digit7:55,Digit8:56,Digit9:57,NumpadMultiply:106,NumpadDivide:111};
-display.addEventListener('keydown',e=>{const c=keyboardCodeMap[e.code];if(c==null)return;evtQueue.queueEvent({kind:'keydown',args:[c,e.key?.length===1?e.key.charCodeAt(0):0,!!e.ctrlKey,!!e.shiftKey]});e.preventDefault()});
-display.addEventListener('keyup',e=>{const c=keyboardCodeMap[e.code];if(c==null)return;evtQueue.queueEvent({kind:'keyup',args:[c,e.key?.length===1?e.key.charCodeAt(0):0,!!e.ctrlKey,!!e.shiftKey]});e.preventDefault()});
+const keyboardCodeMap={
+  Enter:13,Backspace:8,Delete:46,Tab:9,Escape:27,Space:32,
+  ArrowLeft:37,ArrowRight:39,ArrowUp:38,ArrowDown:40,
+  F1:112,F2:113,
+  Digit0:48,Digit1:49,Digit2:50,Digit3:51,Digit4:52,
+  Digit5:53,Digit6:54,Digit7:55,Digit8:56,Digit9:57,
+  Numpad0:96,Numpad1:97,Numpad2:98,Numpad3:99,Numpad4:100,
+  Numpad5:101,Numpad6:102,Numpad7:103,Numpad8:104,Numpad9:105,
+  NumpadMultiply:106,NumpadAdd:107,NumpadSubtract:109,NumpadDecimal:110,NumpadDivide:111,
+};
+function browserKeyCode(e){
+  const mapped=keyboardCodeMap[e.code];
+  if(mapped!=null)return mapped;
+  if(/^Key[A-Z]$/.test(e.code))return e.code.charCodeAt(3);
+  if(e.key?.length===1){
+    const ch=e.key;
+    const upper=ch.toUpperCase();
+    if(upper.length===1){
+      const cc=upper.charCodeAt(0);
+      if(cc>=65&&cc<=90)return cc;
+    }
+    return Number(e.keyCode||e.which)||ch.charCodeAt(0);
+  }
+  return null;
+}
+function browserKeySymbol(e,code){
+  if(e.key?.length===1)return e.key.charCodeAt(0);
+  if(code===8)return 8;      // Backspace
+  if(code===9)return 9;      // Tab
+  if(code===13)return 13;    // Enter  if(code===32)return 32;    // Space
+  if(code===46)return 127;   // Delete / DEL
+  return 0;
+}
+function queueKeyboardEvent(kind,e){
+  // Ctrl/Cmd+V must be left to the browser so the paste event below can read
+  // clipboardData. Do not emit a literal V into the J2ME TextBox.
+  if((e.ctrlKey||e.metaKey)&&String(e.key||'').toLowerCase()==='v')return false;
+  // Keep browser/system shortcuts (Ctrl+C, Ctrl+L, Alt+Tab...) out of the game.
+  if((e.ctrlKey||e.metaKey||e.altKey)&&!(e.ctrlKey&&e.altKey))return false;
+  const code=browserKeyCode(e);
+  if(code==null)return false;
+  const symbol=browserKeySymbol(e,code);
+  evtQueue.queueEvent({kind,args:[code,symbol,!!e.ctrlKey,!!e.shiftKey]});
+  return true;
+}
+display.addEventListener('keydown',e=>{
+  if(queueKeyboardEvent('keydown',e))e.preventDefault();
+});
+display.addEventListener('keyup',e=>{
+  if(queueKeyboardEvent('keyup',e))e.preventDefault();
+});
+function queueTextInput(text){
+  // FreeJ2ME's KeyEvent carries (keyCode, keyChar, ctrl, shift). Feed pasted
+  // text as normal press/release pairs so MIDP TextBox receives the same path
+  // as physical keyboard typing.
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    let code;
+    let symbol;
+    if(ch==='\r'||ch==='\n'){code=13;symbol=13;if(ch==='\r'&&text[i+1]==='\n')i++}
+    else if(ch==='\t'){code=9;symbol=9}
+    else{
+      symbol=ch.charCodeAt(0);
+      const upper=ch.toUpperCase();
+      const upperCode=upper.length===1?upper.charCodeAt(0):symbol;
+      code=(upperCode>=65&&upperCode<=90)?upperCode:symbol;
+    }
+    evtQueue.queueEvent({kind:'keydown',args:[code,symbol,false,false]});
+    evtQueue.queueEvent({kind:'keyup',args:[code,symbol,false,false]});
+  }
+}
+window.addEventListener('paste',e=>{
+  if(document.activeElement!==display||currentStage!=='RUNNING')return;
+  const text=e.clipboardData?.getData('text/plain')||'';
+  if(!text)return;
+  e.preventDefault();
+  queueTextInput(text);
+  log('info',`[input] Pasted ${text.length} ký tự vào J2ME.`);
+});
 let pointerDown=false;
 function pointerXY(e){const r=display.getBoundingClientRect();return{x:Math.max(0,Math.floor((e.clientX-r.left)*display.width/Math.max(1,r.width))),y:Math.max(0,Math.floor((e.clientY-r.top)*display.height/Math.max(1,r.height)))}}
 display.addEventListener('pointerdown',e=>{pointerDown=true;display.setPointerCapture?.(e.pointerId);display.focus();evtQueue.queueEvent({kind:'pointerpressed',...pointerXY(e)})});
@@ -244,7 +325,7 @@ function makeMidiStub(){
   return{midiPlayer:player,async init(){},async close(){}};
 }
 async function initializeRuntime(){
-  if(runtime.freej2meLoaded&&runtime.FreeJ2ME&&runtime.launcherUtil)return;
+  if(runtime.runtimeInitialized&&runtime.freej2meLoaded&&runtime.corePath)return;
   if(!IS_TOP_LEVEL)throw new Error('STANDALONE_RUNNER_REQUIRED: AI Studio nested iframe không chạy CheerpJ ổn định.');
 
   await loadCheerpJScript();
@@ -272,7 +353,7 @@ async function initializeRuntime(){
     async Java_pl_zb3_freej2me_bridge_shell_Shell_getScreenCtx(){runtime.canvasConnected=true;return screenCtx},
     async Java_pl_zb3_freej2me_bridge_shell_Shell_setCanvasSize(_lib,w,h){
       display.width=Number(w);display.height=Number(h);display.style.display='block';runtime.canvasConnected=true;
-      setStage('RUNNING',`Game running (${w}x${h})`);log('info',`[frame] Canvas ${w}x${h}`);
+      clearTimeout(globalThis.__nroStartupProbe);setStage('RUNNING',`Game running (${w}x${h})`);log('info',`[frame] Canvas ${w}x${h}`);
       await clearCachedLaunch();
     },
     async Java_pl_zb3_freej2me_bridge_shell_Shell_waitForAndDispatchEvents(lib,listener){
@@ -284,8 +365,12 @@ async function initializeRuntime(){
       else if(evt.kind==='pointerpressed')await listener.pointerPressed(await new PointerEvent(evt.x,evt.y));
       else if(evt.kind==='pointerdragged')await listener.pointerDragged(await new PointerEvent(evt.x,evt.y));
       else if(evt.kind==='pointerreleased')await listener.pointerReleased(await new PointerEvent(evt.x,evt.y));
-      else if(evt.kind==='player-eom')await listener.playerEOM(evt.player);
-      else if(evt.kind==='player-video-frame')await listener.playerVideoFrame(evt.player);
+      else if(evt.kind==='player-eom'){
+        if(evt.player) await listener.playerEOM(evt.player);
+      }
+      else if(evt.kind==='player-video-frame'){
+        if(evt.player) await listener.playerVideoFrame(evt.player);
+      }
     },
     async Java_pl_zb3_freej2me_bridge_shell_Shell_restart(){location.reload()},
     async Java_pl_zb3_freej2me_bridge_shell_Shell_exit(){setStage('STOPPED','MIDlet exited.')},
@@ -307,112 +392,111 @@ async function initializeRuntime(){
   runtime.runtimeInitialized=true;
   log('info','[4] CheerpJ initialized.');
 
-  // Load theo đúng cơ chế upstream của FreeJ2ME/CheerpJ: JAR được phục vụ qua /app.
-  // Bản V5 chuyển core sang /str đã làm cheerpjRunLibrary treo trên runtime này.
-  // /app trước đó đã load thành công trên chính deployment này, nên không fallback sang /str nữa.
-  const libraryPath = '/app/emulator/core/freej2me-web.jar';
-  setStage('LOADING_RUNTIME', `Loading FreeJ2ME: ${libraryPath}`);
-  log('info', `[5] Loading FreeJ2ME directly from /app (upstream library mode): ${libraryPath}`);
-  runtime.lib = await withTimeout(
-    window.cheerpjRunLibrary(libraryPath),
-    CORE_LOAD_TIMEOUT_MS,
-    'cheerpjRunLibrary(/app)'
-  );
+  // Application mode only. Use the same classpath source as upstream
+  // freej2me-web: the emulator core JAR is served from /app (HTTP-backed VFS).
+  // /str is reserved for the user-selected game JAR bytes.
+  if(typeof window.cheerpjRunMain!=='function'){
+    throw new Error('cheerpjRunMain không tồn tại trên CheerpJ runtime hiện tại');
+  }
+  if(typeof window.cheerpOSAddStringFile!=='function'){
+    throw new Error('cheerpOSAddStringFile không tồn tại trên CheerpJ runtime hiện tại');
+  }
 
-  runtime.FreeJ2ME=await runtime.lib.org.recompile.freej2me.FreeJ2ME;
-  runtime.launcherUtil=await runtime.lib.pl.zb3.freej2me.launcher.LauncherUtil;
+  const corePath='/app/emulator/core/freej2me-web.jar';
+  runtime.corePath=corePath;
   runtime.freej2meLoaded=true;
-  setStage('RUNTIME_READY','FreeJ2ME ready.');
-  log('info','[6] FreeJ2ME library ready.');
+  setStage('RUNTIME_READY','FreeJ2ME core ready.');
+  log('info',`[5] Core classpath ready from /app: ${corePath}`);
 }
 
 async function mountJar(buffer,fileName){
   setStage('MOUNTING_JAR',`Mounting ${fileName}...`);
-  if(!(buffer instanceof ArrayBuffer))throw new Error('jarBuffer không phải ArrayBuffer');
-  if(!runtime.lib||!runtime.launcherUtil)throw new Error('FreeJ2ME chưa init');
-  try{await runtime.launcherUtil.resetTmpDir()}catch(e){log('warn',`resetTmpDir: ${e?.message||e}`)}
-  const File=await runtime.lib.java.io.File;
-  const safe=String(fileName||'game.jar').replace(/[^a-zA-Z0-9._-]/g,'_');
-  const path=`/files/_tmp/${Date.now()}_${safe}`;
-  const jarFile=await new File(path);
-  await runtime.launcherUtil.copyJar(new Int8Array(buffer),jarFile);
-  runtime.jarPath=path;runtime.gameJarMounted=true;
-  setStage('JAR_MOUNTED',`JAR mounted: ${path}`);log('info',`[7] Mounted ${buffer.byteLength} bytes`);
+  if(!(buffer instanceof ArrayBuffer)){
+    throw new Error('jarBuffer không phải ArrayBuffer');
+  }
+  if(typeof window.cheerpOSAddStringFile!=='function'){
+    throw new Error('cheerpOSAddStringFile chưa sẵn sàng');
+  }
+
+  const safe=String(fileName||'game.jar')
+    .replace(/[^a-zA-Z0-9._-]/g,'_')
+    .slice(-80);
+  const path=`/str/nro-game-${Date.now()}-${safe}`;
+  window.cheerpOSAddStringFile(path,new Uint8Array(buffer));
+
+  runtime.jarPath=path;
+  runtime.gameJarMounted=true;
+  setStage('JAR_MOUNTED',`JAR mounted: ${path}`);
+  log('info',`[6] Game JAR mounted in /str: ${buffer.byteLength} bytes.`);
   return path;
 }
-async function detectAppId(jarPath,fileName){
-  const File=await runtime.lib.java.io.File;
-  const MIDletLoader=await runtime.lib.org.recompile.mobile.MIDletLoader;
-  const jarFile=await new File(jarPath);
-  const loader=await MIDletLoader.getMIDletLoader(jarFile);
-  if(!loader)throw new Error('MIDletLoader không mở được JAR');
-  await runtime.launcherUtil.ensureAppId(loader,String(fileName||'game.jar'));
-  return String(await loader.getAppId());
-}
-async function removeInstalledAppJar(appId){
-  const File=await runtime.lib.java.io.File;
-  const appJar=await new File(`${appId}/app.jar`);
-  let exists=false;
-  try{exists=Boolean(await appJar.exists())}catch{}
-  if(!exists)return;
 
-  let deleted=false;
-  try{deleted=Boolean(await appJar.delete())}catch(e){
-    log('warn',`Không xóa trực tiếp được ${appId}/app.jar: ${e?.message||e}`);
-  }
-  if(!deleted){
-    // FreeJ2ME initApp dùng Files.copy(..., [appId]/app.jar) KHÔNG có REPLACE_EXISTING.
-    // Nếu file cũ không xóa được thì gỡ app folder là fallback an toàn để lần chạy mới cài lại JAR.
-    log('warn',`Fallback uninstall ${appId} để tránh FileAlreadyExistsException.`);
-    await runtime.launcherUtil.uninstallApp(appId);
-  }else{
-    log('info',`[app] Removed stale ${appId}/app.jar before reinstall.`);
-  }
-}
-
-async function resetPersistentGameData(jarPath,fileName){
-  const appId=await detectAppId(jarPath,fileName);
-  runtime.appId=appId;
-  setStage('JAR_MOUNTED',`Chuẩn bị app: ${appId}...`);
-
-  if(RESET_MODE==='full'){
-    // full = xóa toàn bộ app + RMS/config trước khi FreeJ2ME cài lại JAR.
-    await runtime.launcherUtil.uninstallApp(appId);
-    log('info',`[app] Full reset ${appId}.`);
-    return;
-  }
-
-  if(RESET_MODE==='rms'){
-    // rms = chỉ xóa save/RMS, giữ config; app.jar vẫn phải xóa để initApp có thể copy JAR mới.
-    await runtime.launcherUtil.wipeAppData(appId);
-  }
-
-  // Kể cả reset=none vẫn phải bỏ app.jar cũ. FreeJ2ME upstream dùng Files.copy
-  // không có REPLACE_EXISTING nên lần chạy thứ hai sẽ crash nếu file này còn tồn tại.
-  await removeInstalledAppJar(appId);
-}
 async function startMidlet(jarPath){
-  setStage('STARTING_MIDLET','Starting MIDlet...');
-  if(!runtime.FreeJ2ME)throw new Error('FreeJ2ME entry class missing');
+  if(!runtime.runtimeInitialized||!runtime.freej2meLoaded||!runtime.corePath){
+    throw new Error('CheerpJ/FreeJ2ME core chưa sẵn sàng');
+  }
+  if(typeof window.cheerpjRunMain!=='function'){
+    throw new Error('cheerpjRunMain không tồn tại');
+  }
+
+  setStage('STARTING_MIDLET','Starting FreeJ2ME.main...');
   runtime.midletStarted=true;
-  log('info',`[8] FreeJ2ME.main(['jar','${jarPath}'])`);
-  runtime.mainPromise=runtime.FreeJ2ME.main(['jar',jarPath]);
-  Promise.resolve(runtime.mainPromise).catch(e=>fatal('MIDlet crashed',e));
-  log('info','[9] MIDlet launched; waiting for first Canvas.');
+
+  log(
+    'info',
+    `[7] cheerpjRunMain classpath=${runtime.corePath} game=${jarPath}`
+  );
+
+  // Application mode: start Java main directly; do not await because the game
+  // remains alive until MIDlet exit. First Canvas callback marks RUNNING.
+  runtime.mainPromise=window.cheerpjRunMain(
+    'org.recompile.freej2me.FreeJ2ME',
+    runtime.corePath,
+    'jar',
+    jarPath
+  );
+
+  globalThis.__nroStartupProbe=setTimeout(()=>{
+    if(currentStage==='STARTING_MIDLET'){
+      log('warn','[probe] Java main vẫn đang khởi tạo sau 20s; chưa nhận Shell.setCanvasSize().');
+    }
+  },20_000);
+
+  Promise.resolve(runtime.mainPromise)
+    .then((exitCode)=>{
+      if(currentStage!=='RUNNING'){
+        log('warn',`[FreeJ2ME] main exited early with code ${exitCode}`);
+      }else{
+        log('info',`[FreeJ2ME] main exited with code ${exitCode}`);
+      }
+    })
+    .catch((error)=>fatal('MIDlet crashed',error));
+
+  log('info','[8] FreeJ2ME main started; waiting for first Canvas.');
 }
+
 async function launch(payload){
   pendingLaunch=payload;
   await cacheLaunch(payload);
+
   const generation=++launchGeneration;
   const {jarBuffer,fileName}=payload;
-  if(!(jarBuffer instanceof ArrayBuffer))throw new Error('LOAD_JAR thiếu ArrayBuffer');
+  if(!(jarBuffer instanceof ArrayBuffer)){
+    throw new Error('LOAD_JAR thiếu ArrayBuffer');
+  }
+
   post('JAR_ACK',{fileName,byteLength:jarBuffer.byteLength});
   log('info',`[handoff] JAR received: ${fileName} (${jarBuffer.byteLength} bytes)`);
-  await initializeRuntime();if(generation!==launchGeneration)return;
-  const path=await mountJar(jarBuffer,fileName);if(generation!==launchGeneration)return;
-  await resetPersistentGameData(path,fileName);if(generation!==launchGeneration)return;
+
+  await initializeRuntime();
+  if(generation!==launchGeneration)return;
+
+  const path=await mountJar(jarBuffer,fileName);
+  if(generation!==launchGeneration)return;
+
   await startMidlet(path);
 }
+
 async function runSelfTest(){
   try{
     setStage('LOADING_RUNTIME','Self-test runtime...');
@@ -442,11 +526,11 @@ window.addEventListener('message',async event=>{
 async function bootstrap(){
   if(!IS_TOP_LEVEL){
     setStage('IDLE','Preview nhúng chỉ là placeholder. Chạy game từ editor sẽ mở runner top-level.');
-    post('IFRAME_READY',{runnerVersion:'phase15-placeholder',runtimeInfo:runtimeInfo()});
+    post('IFRAME_READY',{runnerVersion:'phase23-placeholder',runtimeInfo:runtimeInfo()});
     return;
   }
 
-  post('IFRAME_READY',{runnerVersion:'phase18-appjar-reinstall',runtimeInfo:runtimeInfo()});
+  post('IFRAME_READY',{runnerVersion:'phase26-global-event-queue',runtimeInfo:runtimeInfo()});
   setStage('IDLE','Runner sẵn sàng.');
 }
 bootstrap();

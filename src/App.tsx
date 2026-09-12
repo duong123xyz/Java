@@ -54,6 +54,7 @@ import { getDirtyCount } from './services/itemDraftService';
 import {
   DraftTestBuildResult,
   DraftTestProgress,
+  isDraftTestCandidateFresh,
 } from './services/draftTestService';
 import { buildUnifiedWorkspaceCandidate } from './services/unifiedCandidateService';
 import { getPatchWorkspaceOperationCount } from './services/patchWorkspaceStateService';
@@ -668,11 +669,15 @@ export default function App() {
 
     const metadata = getWorkspaceMetadata(session);
     let candidate =
+      isDraftTestCandidateFresh(session) &&
       session.candidateOutput?.status === 'VALIDATED'
         ? session.candidateOutput
         : null;
 
     if (!candidate) {
+      // Draft vừa thay đổi thì candidate cũ không còn phản ánh các rule runtime
+      // (đặc biệt Drop custom). Xóa cache và build lại đúng fingerprint hiện tại.
+      session.candidateOutput = undefined;
       candidate = await handleTestDraft(false);
     }
 
