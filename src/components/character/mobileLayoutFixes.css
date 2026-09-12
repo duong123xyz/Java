@@ -390,6 +390,9 @@ body,
   .light-theme main input,
   .light-theme main select,
   .light-theme main textarea {
+    background-color: #ffffff !important;
+    color: #18181b !important;
+    border-color: #d4d4d8 !important;
     min-height: 42px;
     font-size: 16px !important;
     max-width: 100% !important;

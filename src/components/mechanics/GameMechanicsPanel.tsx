@@ -41,6 +41,9 @@ import {
 } from '../../services/advancedMechanicsService';
 import { SmallImagePreview } from '../game-data/SmallImagePreview';
 import { analyzeSkills } from '../../services/skillDataService';
+import { analyzeItemTables } from '../../services/itemDataService';
+import { ItemRecord } from '../../types/item';
+import { analyzeMaps, GameMapRecord } from '../../services/mapDataService';
 
 interface GameMechanicsPanelProps {
   session: LoadedJarSession;
@@ -183,7 +186,7 @@ export function GameMechanicsPanel({ session, onDraftsUpdated }: GameMechanicsPa
   }
 
   return (
-    <div className="nro-mechanics-panel w-full min-w-0 max-w-full space-y-3 pb-24 md:pb-4 overflow-x-hidden">
+    <div className="w-full min-w-0 max-w-full space-y-3 pb-24 md:pb-4 overflow-x-hidden">
       <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-3 sm:p-4 space-y-3 min-w-0">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 min-w-0">
           <div className="min-w-0">
@@ -289,7 +292,7 @@ function AdvancedMechanicsView({
           </button>
         }
       >
-        <div className="grid grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)] gap-3 min-w-0">
+        <div className="grid grid-cols-1 sm:grid-cols-[180px_minmax(0,1fr)] gap-3">
           <NumberField
             label="Phí mỗi lượt (Ngọc)"
             value={advanced.godWheelCost}
@@ -298,56 +301,56 @@ function AdvancedMechanicsView({
             disabled={!advanced.godWheelEnabled}
             onChange={(value) => onChange({ godWheelCost: Math.max(0, Math.round(value)) })}
           />
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 min-w-0">
-            {(advanced.godWheelRates || []).map((rate, index) => (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            {advanced.godWheelRates.map((rate, index) => (
               <div key={index} className="rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 min-w-0">
                 <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Phần thưởng {index + 1}</div>
-                <div className="grid grid-cols-2 gap-2 mt-2 min-w-0">
+                <div className="grid grid-cols-2 gap-2 mt-2">
                   <NumberField compact label="Tỷ lệ %" value={rate} min={0} max={100} step={1} disabled={!advanced.godWheelEnabled} onChange={(value) => updateWheelRate(index, value)} />
-                  <NumberField compact label="Ngọc nhận" value={advanced.godWheelRewards?.[index] ?? 0} min={0} step={1} disabled={!advanced.godWheelEnabled} onChange={(value) => updateWheelReward(index, value)} />
+                  <NumberField compact label="Ngọc nhận" value={advanced.godWheelRewards[index]} min={0} step={1} disabled={!advanced.godWheelEnabled} onChange={(value) => updateWheelReward(index, value)} />
                 </div>
               </div>
             ))}
           </div>
         </div>
-        <TotalRate total={sum(advanced.godWheelRates || [])} enabled={advanced.godWheelEnabled} />
+        <TotalRate total={sum(advanced.godWheelRates)} enabled={advanced.godWheelEnabled} />
       </Section>
 
       <Section icon={<Sparkles className="w-4 h-4 text-amber-500" />} title="Đập đồ" subtitle="Tỷ lệ thành công theo cấp nâng hiện tại (+0 → +8).">
-        <RateGrid values={advanced.gearUpgradeRates || []} defaults={ADVANCED_DEFAULTS.gearUpgradeRates} onChange={(index, value) => updateUpgrade('gearUpgradeRates', index, value)} prefix="+" />
+        <RateGrid values={advanced.gearUpgradeRates} defaults={ADVANCED_DEFAULTS.gearUpgradeRates} onChange={(index, value) => updateUpgrade('gearUpgradeRates', index, value)} prefix="+" />
       </Section>
 
       <Section icon={<Star className="w-4 h-4 text-sky-500" />} title="Đập đồ sao" subtitle="Tỷ lệ đập sao / option 107 theo số sao hiện tại.">
-        <RateGrid values={advanced.crystalUpgradeRates || []} defaults={ADVANCED_DEFAULTS.crystalUpgradeRates} onChange={(index, value) => updateUpgrade('crystalUpgradeRates', index, value)} prefix="★" />
+        <RateGrid values={advanced.crystalUpgradeRates} defaults={ADVANCED_DEFAULTS.crystalUpgradeRates} onChange={(index, value) => updateUpgrade('crystalUpgradeRates', index, value)} prefix="★" />
       </Section>
 
       <Section icon={<Dices className="w-4 h-4 text-violet-600" />} title="Tỷ lệ ra skill Đệ tử" subtitle="Chỉnh trực tiếp nhánh RNG Đấm Dragon / Demon / Galick và 3 mốc sức mạnh.">
-        <div className="space-y-2.5 min-w-0">
-          {(DISCIPLE_SKILL_GROUPS || []).map((group, row) => {
-            const rates = advanced.discipleSkillRates?.[row] ?? [33, 33, 34];
+        <div className="space-y-2.5">
+          {DISCIPLE_SKILL_GROUPS.map((group, row) => {
+            const rates = advanced.discipleSkillRates[row];
             const total = sum(rates);
             const ok = Math.abs(total - 100) < 0.011;
             return (
               <div key={group.title} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 min-w-0">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
-                  <div className="min-w-0">
+                  <div>
                     <div className="text-sm font-bold text-zinc-900">{group.title}</div>
                     <div className="text-[10px] text-zinc-500">{group.note}</div>
                   </div>
-                  <span className={`text-[10px] font-bold shrink-0 ${ok ? 'text-emerald-600' : 'text-red-600'}`}>Tổng {Number(total.toFixed(2))}%</span>
+                  <span className={`text-[10px] font-bold ${ok ? 'text-emerald-600' : 'text-red-600'}`}>Tổng {Number(total.toFixed(2))}%</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 min-w-0">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {([
                     [0, 14, 28],
                     [7, 21, 35],
                     [42, 56, 63],
                     [91, 84, 121],
-                  ][row] || []).map((skillId, column) => {
+                  ][row]).map((skillId, column) => {
                     const fallback = group.labels[column];
                     const resolved = skillNames[skillId];
                     const label = resolved ? resolved.replace(/^Chiêu\s+/i, '') : fallback;
                     return (
-                      <NumberField key={skillId} label={label} value={rates[column] ?? 0} min={0} max={100} step={1} suffix="%" onChange={(value) => updateDisciple(row, column, value)} />
+                      <NumberField key={skillId} label={label} value={rates[column]} min={0} max={100} step={1} suffix="%" onChange={(value) => updateDisciple(row, column, value)} />
                     );
                   })}
                 </div>
@@ -356,7 +359,7 @@ function AdvancedMechanicsView({
           })}
         </div>
         <div className="mt-3 flex justify-end">
-          <button type="button" onClick={onReset} className="px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer hover:bg-zinc-50">
+          <button type="button" onClick={onReset} className="px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
             <RotateCcw className="w-3.5 h-3.5" />Khôi phục tỷ lệ RNG gốc
           </button>
         </div>
@@ -367,12 +370,12 @@ function AdvancedMechanicsView({
 
 function RateGrid({ values, defaults, onChange, prefix }: { values: number[]; defaults: number[]; onChange: (index: number, value: number) => void; prefix: string }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-2 min-w-0 w-full">
+    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-9 gap-2">
       {values.map((value, index) => (
-        <div key={index} className="rounded-xl border border-zinc-200 bg-zinc-50 p-2 sm:p-2.5 min-w-0 flex flex-col justify-between">
-          <div className="flex items-center justify-between gap-1 mb-1.5 min-w-0">
+        <div key={index} className="rounded-xl border border-zinc-200 bg-zinc-50 p-2.5">
+          <div className="flex items-center justify-between gap-1 mb-1.5">
             <span className="text-xs font-bold text-zinc-800">{prefix}{index}</span>
-            <span className="text-[9px] text-zinc-400 font-mono truncate">gốc {pct(defaults[index] ?? 0)}</span>
+            <span className="text-[9px] text-zinc-400 font-mono">gốc {pct(defaults[index])}</span>
           </div>
           <NumberField compact label="Thành công" value={value} min={0} max={100} step={1} suffix="%" onChange={(next) => onChange(index, next)} />
         </div>
@@ -402,6 +405,47 @@ function DropView({
   group: DropGroup;
   setGroup: (value: DropGroup) => void;
 }) {
+  const [itemCatalog, setItemCatalog] = useState<ItemRecord[]>(() => session.itemAnalysis?.items ?? []);
+  const [itemCatalogError, setItemCatalogError] = useState<string | null>(null);
+  const [mapCatalog, setMapCatalog] = useState<GameMapRecord[]>([]);
+  const [mapCatalogError, setMapCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (session.itemAnalysis?.items?.length) {
+      setItemCatalog(session.itemAnalysis.items);
+      setItemCatalogError(null);
+      return () => { active = false; };
+    }
+    void analyzeItemTables(session)
+      .then((result) => {
+        if (!active) return;
+        setItemCatalog(result.items);
+        setItemCatalogError(null);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setItemCatalogError(err instanceof Error ? err.message : String(err));
+      });
+    return () => { active = false; };
+  }, [session]);
+
+  useEffect(() => {
+    let active = true;
+    void analyzeMaps(session)
+      .then((result) => {
+        if (!active) return;
+        setMapCatalog(result.maps.slice().sort((a, b) => a.id - b.id));
+        setMapCatalogError(null);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setMapCatalog([]);
+        setMapCatalogError(err instanceof Error ? err.message : String(err));
+      });
+    return () => { active = false; };
+  }, [session]);
+
   const updateChance = (key: string, value: number) => setDraft((current) => ({ ...current, dropChancePercent: { ...current.dropChancePercent, [key]: normalizeChance(value) } }));
   const updateQuantity = (key: string, value: number) => setDraft((current) => ({ ...current, dropQuantity: { ...current.dropQuantity, [key]: normalizeQuantity(value) } }));
   const addCustom = () => setDraft((current) => ({
@@ -447,17 +491,55 @@ function DropView({
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 min-w-0">
-                  <NumberField label="Item ID" value={rule.itemId} min={0} step={1} onChange={(value) => updateCustom(rule.id, { itemId: Math.max(0, Math.round(value)) })} />
-                  <NumberField label="Số lượng" value={rule.quantity} min={1} step={1} onChange={(value) => updateCustom(rule.id, { quantity: normalizeQuantity(value) })} />
-                  <NumberField label="Tỷ lệ %" value={rule.chancePercent} min={0} max={100} step={0.1} suffix="%" onChange={(value) => updateCustom(rule.id, { chancePercent: normalizeChance(value) })} />
-                  <NullableNumberField label="Mob type (trống = tất cả)" value={rule.mobType} onChange={(value) => updateCustom(rule.id, { mobType: value })} />
-                  <NullableNumberField label="Map ID (trống = tất cả)" value={rule.mapId} onChange={(value) => updateCustom(rule.id, { mapId: value })} />
+                <div className="space-y-2 min-w-0">
+                  <ItemSearchField
+                    session={session}
+                    items={itemCatalog}
+                    value={rule.itemId}
+                    onChange={(itemId) => updateCustom(rule.id, { itemId })}
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 min-w-0">
+                    <NumberField label="Số lượng" value={rule.quantity} min={1} step={1} onChange={(value) => updateCustom(rule.id, { quantity: normalizeQuantity(value) })} />
+                    <NumberField label="Tỷ lệ %" value={rule.chancePercent} min={0} max={100} step={0.1} suffix="%" onChange={(value) => updateCustom(rule.id, { chancePercent: normalizeChance(value) })} />
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 min-w-0">
+                    <MapSearchField
+                      maps={mapCatalog}
+                      value={rule.mapId}
+                      onChange={(mapId) => {
+                        let mobType = rule.mobType;
+                        if (mapId !== null && mobType !== null) {
+                          const nextMap = mapCatalog.find((map) => map.id === mapId);
+                          if (nextMap && !nextMap.mobs.some((mob) => mob.type === mobType)) mobType = null;
+                        }
+                        updateCustom(rule.id, { mapId, mobType });
+                      }}
+                    />
+                    <MobTypeSearchField
+                      maps={mapCatalog}
+                      selectedMapId={rule.mapId}
+                      value={rule.mobType}
+                      onChange={(mobType) => updateCustom(rule.id, { mobType })}
+                    />
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
+        <div className="mt-2 text-[10px] text-zinc-500">
+          {itemCatalogError
+            ? <span className="text-amber-700">Không đọc được danh mục tên item: {itemCatalogError}. Vẫn có thể nhập ID trực tiếp.</span>
+            : itemCatalog.length > 0
+              ? <span>Tìm kiếm trên {itemCatalog.length.toLocaleString('vi-VN')} item đã đọc trực tiếp từ JAR.</span>
+              : <span>Đang đọc danh mục item từ JAR...</span>}
+          <span className="mx-1.5 text-zinc-300">•</span>
+          {mapCatalogError
+            ? <span className="text-amber-700">Không đọc được map/quái: {mapCatalogError}. Vẫn có thể nhập ID/type thủ công trong ô tìm kiếm.</span>
+            : mapCatalog.length > 0
+              ? <span>{mapCatalog.length.toLocaleString('vi-VN')} map · {mapCatalog.reduce((sum, map) => sum + map.mobs.length, 0).toLocaleString('vi-VN')} spawn quái.</span>
+              : <span>Đang đọc map/quái từ JAR...</span>}
+        </div>
       </Section>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-3 sm:p-4 space-y-3 min-w-0">
@@ -465,8 +547,24 @@ function DropView({
           <div className="flex items-center gap-2"><PackageSearch className="w-4 h-4 text-emerald-600" /><span className="font-bold text-zinc-900">Drop có sẵn ({snapshot.mobDrops.length})</span></div>
           <div className="relative w-full sm:w-72"><Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm tên / item ID..." className="w-full h-11 pl-9 pr-3 rounded-xl border border-zinc-300 bg-white text-[16px] sm:text-sm text-zinc-900 outline-none focus:border-violet-500" /></div>
         </div>
-        <div className="grid grid-cols-4 gap-1">
-          {(['all', 'common', 'conditional', 'special'] as DropGroup[]).map((value) => <button key={value} type="button" onClick={() => setGroup(value)} className={`px-2 py-2 rounded-lg text-[10px] sm:text-xs font-semibold ${group === value ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}`}>{value === 'all' ? 'Tất cả' : value === 'common' ? 'Phổ thông' : value === 'conditional' ? 'Điều kiện' : 'Đặc biệt'}</button>)}
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-zinc-100 border border-zinc-200 overflow-x-auto w-full sm:w-fit">
+          {(['all', 'common', 'conditional', 'special'] as DropGroup[]).map((value) => {
+            const isSelected = group === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setGroup(value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap select-none ${
+                  isSelected
+                    ? 'bg-emerald-600 text-white shadow-xs font-bold'
+                    : 'text-zinc-700 hover:text-zinc-900 hover:bg-zinc-200/70'
+                }`}
+              >
+                {value === 'all' ? 'Tất cả' : value === 'common' ? 'Phổ thông' : value === 'conditional' ? 'Điều kiện' : 'Đặc biệt'}
+              </button>
+            );
+          })}
         </div>
       </section>
 
@@ -490,6 +588,422 @@ function DropView({
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+
+function normalizeItemSearch(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function ItemSearchField({
+  session,
+  items,
+  value,
+  onChange,
+}: {
+  session: LoadedJarSession;
+  items: ItemRecord[];
+  value: number;
+  onChange: (itemId: number) => void;
+}) {
+  const selected = useMemo(
+    () => items.find((item) => Number(item.id) === value) ?? null,
+    [items, value]
+  );
+  const [query, setQuery] = useState(() => selected?.name || String(value));
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) setQuery(selected?.name || String(value));
+  }, [selected?.name, value, open]);
+
+  const results = useMemo(() => {
+    const normalized = normalizeItemSearch(query);
+    if (!normalized) return items.slice(0, 12);
+    const numeric = /^\d+$/.test(normalized) ? Number(normalized) : null;
+    return items
+      .filter((item) => {
+        const id = Number(item.id);
+        if (numeric !== null && id === numeric) return true;
+        return (
+          normalizeItemSearch(item.name || '').includes(normalized) ||
+          String(item.id).includes(normalized) ||
+          normalizeItemSearch(item.description || '').includes(normalized)
+        );
+      })
+      .slice(0, 12);
+  }, [items, query]);
+
+  const commitManualId = () => {
+    const trimmed = query.trim();
+    if (!/^\d+$/.test(trimmed)) return;
+    onChange(Math.max(0, Math.round(Number(trimmed))));
+    setOpen(false);
+  };
+
+  return (
+    <div className="block min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="block text-[10px] font-medium text-zinc-500">Vật phẩm · tìm tên hoặc ID</span>
+        {selected && <span className="text-[10px] text-emerald-700 font-semibold truncate">Đã chọn: {selected.name || `Item #${selected.id}`}</span>}
+      </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400 pointer-events-none" />
+        <input
+          type="text"
+          inputMode="search"
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              const exact = results[0];
+              if (exact && (normalizeItemSearch(exact.name) === normalizeItemSearch(query) || String(exact.id) === query.trim())) {
+                onChange(Math.max(0, Number(exact.id) || 0));
+                setQuery(exact.name || String(exact.id));
+                setOpen(false);
+              } else {
+                commitManualId();
+              }
+            } else if (event.key === 'Escape') {
+              setOpen(false);
+              setQuery(selected?.name || String(value));
+            }
+          }}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          placeholder="VD: Ngọc Rồng, Capsule, 77..."
+          className="w-full h-11 rounded-xl border border-zinc-300 bg-white pl-9 pr-16 text-[16px] sm:text-sm text-zinc-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+        />
+        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded-md bg-zinc-100 border border-zinc-200 text-[9px] font-mono text-zinc-600 pointer-events-none">
+          ID {value}
+        </span>
+      </div>
+
+      {open && (
+        <div className="mt-2 max-h-80 overflow-y-auto rounded-xl border border-violet-200 bg-white shadow-sm p-1.5">
+          <div className="px-2 py-1.5 text-[10px] font-semibold text-zinc-500 border-b border-zinc-100 mb-1">
+            Kết quả tìm kiếm · bấm vào item để chọn
+          </div>
+          {results.length > 0 ? results.map((item) => {
+            const id = Math.max(0, Number(item.id) || 0);
+            return (
+              <button
+                key={`${item.sourceClass}:${item.sourceRow}:${item.id}`}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(id);
+                  setQuery(item.name || String(item.id));
+                  setOpen(false);
+                }}
+                className={`w-full rounded-lg px-3 py-2.5 text-left grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 hover:bg-violet-50 cursor-pointer ${id === value ? 'bg-violet-50 border border-violet-200' : 'border border-transparent'}`}
+              >
+                <SmallImagePreview session={session} imageId={item.iconId} alt={item.name || `Item ${item.id}`} variant="icon" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-semibold text-zinc-900 truncate">{item.name || '(Không tên)'}</span>
+                  <span className="block text-[10px] text-zinc-500 truncate">{item.description || 'Không có mô tả'}</span>
+                </span>
+                <span className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-mono font-bold text-zinc-700">ID {item.id}</span>
+              </button>
+            );
+          }) : (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={commitManualId}
+              disabled={!/^\d+$/.test(query.trim())}
+              className="w-full rounded-lg px-3 py-3 text-left text-[10px] text-zinc-500 disabled:cursor-default"
+            >
+              {/^\d+$/.test(query.trim()) ? `Không thấy tên item. Dùng trực tiếp ID ${query.trim()}.` : 'Không tìm thấy item theo tên hoặc ID.'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+type MobTypeChoice = {
+  type: number;
+  names: string[];
+  mobIds: number[];
+  mapNames: string[];
+};
+
+function MapSearchField({
+  maps,
+  value,
+  onChange,
+}: {
+  maps: GameMapRecord[];
+  value: number | null;
+  onChange: (mapId: number | null) => void;
+}) {
+  const selected = useMemo(
+    () => value === null ? null : maps.find((map) => map.id === value) ?? null,
+    [maps, value]
+  );
+  const [query, setQuery] = useState(() => selected?.name || (value === null ? 'Tất cả map' : String(value)));
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) setQuery(selected?.name || (value === null ? 'Tất cả map' : String(value)));
+  }, [selected?.name, value, open]);
+
+  const results = useMemo(() => {
+    const normalized = normalizeItemSearch(query);
+    if (!normalized || normalized === 'tat ca map') return maps.slice(0, 30);
+    return maps.filter((map) => (
+      normalizeItemSearch(map.name || '').includes(normalized) || String(map.id).includes(normalized)
+    )).slice(0, 40);
+  }, [maps, query]);
+
+  const commitManualId = () => {
+    const trimmed = query.trim();
+    if (!/^-?\d+$/.test(trimmed)) return;
+    onChange(Math.round(Number(trimmed)));
+    setOpen(false);
+  };
+
+  return (
+    <div className="block min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[10px] font-medium text-zinc-500">Map áp dụng</span>
+        <span className="text-[10px] font-semibold text-emerald-700 truncate">
+          {value === null ? 'Tất cả map' : selected ? `Đã chọn: ${selected.name}` : `Map ID ${value}`}
+        </span>
+      </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setOpen(false);
+              setQuery(selected?.name || (value === null ? 'Tất cả map' : String(value)));
+            } else if (event.key === 'Enter') {
+              event.preventDefault();
+              const exact = results.find((map) => String(map.id) === query.trim() || normalizeItemSearch(map.name) === normalizeItemSearch(query));
+              if (exact) {
+                onChange(exact.id);
+                setQuery(exact.name);
+                setOpen(false);
+              } else commitManualId();
+            }
+          }}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          placeholder="Tìm tên map hoặc Map ID..."
+          className="w-full h-11 rounded-xl border border-zinc-300 bg-white pl-9 pr-3 text-[16px] sm:text-sm text-zinc-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+        />
+      </div>
+      {open && (
+        <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-violet-200 bg-white shadow-sm p-1.5">
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => { onChange(null); setQuery('Tất cả map'); setOpen(false); }}
+            className={`w-full rounded-lg px-3 py-2.5 text-left border ${value === null ? 'border-emerald-200 bg-emerald-50' : 'border-transparent hover:bg-zinc-50'}`}
+          >
+            <span className="block text-[12px] font-bold text-zinc-900">Tất cả map</span>
+            <span className="block text-[10px] text-zinc-500">Drop được phép xuất hiện ở mọi bản đồ.</span>
+          </button>
+          {results.map((map) => (
+            <button
+              key={map.id}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { onChange(map.id); setQuery(map.name || String(map.id)); setOpen(false); }}
+              className={`w-full rounded-lg px-3 py-2.5 text-left grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center border ${map.id === value ? 'border-violet-200 bg-violet-50' : 'border-transparent hover:bg-violet-50'}`}
+            >
+              <span className="min-w-0">
+                <span className="block text-[12px] font-semibold text-zinc-900 truncate">{map.name || `Map #${map.id}`}</span>
+                <span className="block text-[10px] text-zinc-500 truncate">{map.mobs.length} spawn quái · hành tinh {map.planetId} · {map.zones} khu</span>
+              </span>
+              <span className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-mono font-bold text-zinc-700">ID {map.id}</span>
+            </button>
+          ))}
+          {results.length === 0 && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={commitManualId}
+              disabled={!/^-?\d+$/.test(query.trim())}
+              className="w-full rounded-lg px-3 py-3 text-left text-[10px] text-zinc-500 disabled:cursor-default"
+            >
+              {/^-?\d+$/.test(query.trim()) ? `Không thấy tên map. Dùng trực tiếp Map ID ${query.trim()}.` : 'Không tìm thấy map.'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MobTypeSearchField({
+  maps,
+  selectedMapId,
+  value,
+  onChange,
+}: {
+  maps: GameMapRecord[];
+  selectedMapId: number | null;
+  value: number | null;
+  onChange: (mobType: number | null) => void;
+}) {
+  const sourceMaps = useMemo(() => {
+    if (selectedMapId === null) return maps;
+    const selectedMap = maps.find((map) => map.id === selectedMapId);
+    return selectedMap ? [selectedMap] : maps;
+  }, [maps, selectedMapId]);
+
+  const choices = useMemo(() => {
+    const grouped = new Map<number, { names: Set<string>; mobIds: Set<number>; mapNames: Set<string> }>();
+    for (const map of sourceMaps) {
+      for (const mob of map.mobs) {
+        const group = grouped.get(mob.type) ?? { names: new Set<string>(), mobIds: new Set<number>(), mapNames: new Set<string>() };
+        if (mob.name) group.names.add(mob.name);
+        group.mobIds.add(mob.mobId);
+        if (map.name) group.mapNames.add(map.name);
+        grouped.set(mob.type, group);
+      }
+    }
+    return Array.from(grouped.entries())
+      .map(([type, group]): MobTypeChoice => ({
+        type,
+        names: Array.from(group.names).sort(),
+        mobIds: Array.from(group.mobIds).sort((a, b) => a - b),
+        mapNames: Array.from(group.mapNames).sort(),
+      }))
+      .sort((a, b) => {
+        const aName = a.names[0] || '';
+        const bName = b.names[0] || '';
+        return aName.localeCompare(bName, 'vi') || a.type - b.type;
+      });
+  }, [sourceMaps]);
+
+  const selected = useMemo(
+    () => value === null ? null : choices.find((choice) => choice.type === value) ?? null,
+    [choices, value]
+  );
+  const selectedLabel = selected?.names.join(', ') || (value === null ? 'Tất cả quái' : `Mob type ${value}`);
+  const [query, setQuery] = useState(() => selectedLabel);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) setQuery(selectedLabel);
+  }, [selectedLabel, open]);
+
+  const results = useMemo(() => {
+    const normalized = normalizeItemSearch(query);
+    if (!normalized || normalized === 'tat ca quai') return choices.slice(0, 30);
+    return choices.filter((choice) => {
+      const haystack = [
+        choice.names.join(' '),
+        choice.mobIds.join(' '),
+        choice.mapNames.join(' '),
+        String(choice.type),
+      ].join(' ');
+      return normalizeItemSearch(haystack).includes(normalized);
+    }).slice(0, 40);
+  }, [choices, query]);
+
+  const commitManualType = () => {
+    const trimmed = query.trim();
+    if (!/^-?\d+$/.test(trimmed)) return;
+    onChange(Math.round(Number(trimmed)));
+    setOpen(false);
+  };
+
+  return (
+    <div className="block min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[10px] font-medium text-zinc-500">Quái áp dụng</span>
+        <span className="text-[10px] font-semibold text-emerald-700 truncate max-w-[65%]">
+          {value === null ? 'Tất cả quái' : `Đã chọn: ${selectedLabel}`}
+        </span>
+      </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setOpen(false);
+              setQuery(selectedLabel);
+            } else if (event.key === 'Enter') {
+              event.preventDefault();
+              const exact = results.find((choice) => choice.type === Number(query.trim()) || choice.names.some((name) => normalizeItemSearch(name) === normalizeItemSearch(query)));
+              if (exact) {
+                onChange(exact.type);
+                setQuery(exact.names.join(', ') || `Mob type ${exact.type}`);
+                setOpen(false);
+              } else commitManualType();
+            }
+          }}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          placeholder={selectedMapId === null ? 'Tìm tên quái / mob type...' : 'Tìm quái trong map đã chọn...'}
+          className="w-full h-11 rounded-xl border border-zinc-300 bg-white pl-9 pr-3 text-[16px] sm:text-sm text-zinc-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+        />
+      </div>
+      {open && (
+        <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-violet-200 bg-white shadow-sm p-1.5">
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => { onChange(null); setQuery('Tất cả quái'); setOpen(false); }}
+            className={`w-full rounded-lg px-3 py-2.5 text-left border ${value === null ? 'border-emerald-200 bg-emerald-50' : 'border-transparent hover:bg-zinc-50'}`}
+          >
+            <span className="block text-[12px] font-bold text-zinc-900">Tất cả quái</span>
+            <span className="block text-[10px] text-zinc-500">Không giới hạn mob type{selectedMapId === null ? ' trên mọi map' : ' trong map đã chọn'}.</span>
+          </button>
+          {results.map((choice) => (
+            <button
+              key={choice.type}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { onChange(choice.type); setQuery(choice.names.join(', ') || `Mob type ${choice.type}`); setOpen(false); }}
+              className={`w-full rounded-lg px-3 py-2.5 text-left grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center border ${choice.type === value ? 'border-violet-200 bg-violet-50' : 'border-transparent hover:bg-violet-50'}`}
+            >
+              <span className="min-w-0">
+                <span className="block text-[12px] font-semibold text-zinc-900 truncate">{choice.names.join(', ') || `Mob type ${choice.type}`}</span>
+                <span className="block text-[10px] text-zinc-500 truncate">Mob ID: {choice.mobIds.join(', ')}{selectedMapId === null && choice.mapNames.length ? ` · ${choice.mapNames.slice(0, 3).join(', ')}${choice.mapNames.length > 3 ? '…' : ''}` : ''}</span>
+              </span>
+              <span className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-mono font-bold text-zinc-700">TYPE {choice.type}</span>
+            </button>
+          ))}
+          {results.length === 0 && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={commitManualType}
+              disabled={!/^-?\d+$/.test(query.trim())}
+              className="w-full rounded-lg px-3 py-3 text-left text-[10px] text-zinc-500 disabled:cursor-default"
+            >
+              {/^-?\d+$/.test(query.trim()) ? `Không thấy tên quái. Dùng trực tiếp mob type ${query.trim()}.` : 'Không tìm thấy quái phù hợp.'}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="mt-1 text-[9px] text-zinc-400">
+        Writer hiện lọc theo <strong>mob type</strong>; khi đã chọn map, chọn tên quái ở đây sẽ map đúng sang type của quái trong map đó.
       </div>
     </div>
   );

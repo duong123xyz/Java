@@ -120,8 +120,29 @@ const LIGHT_THEME_CSS = `
   .light-theme [class~="text-zinc-300"] { color: #3f3f46 !important; }
   .light-theme [class~="text-zinc-400"] { color: #52525b !important; }
   .light-theme [class~="text-zinc-500"] { color: #71717a !important; }
-  .light-theme [class~="text-zinc-600"] { color: #8a8a93 !important; }
-  .light-theme [class~="text-zinc-700"] { color: #a1a1aa !important; }
+  .light-theme [class~="text-zinc-600"] { color: #52525b !important; }
+  .light-theme [class~="text-zinc-700"] { color: #3f3f46 !important; }
+
+  /* Nút bấm / pill chủ động dùng nền tối chữ trắng - bảo toàn nền đen chữ trắng rõ nét */
+  .light-theme button[class~="bg-zinc-950"],
+  .light-theme button[class~="bg-zinc-900"],
+  .light-theme button[class~="bg-zinc-850"],
+  .light-theme button[class~="bg-zinc-800"],
+  .light-theme [class~="bg-zinc-950"][class~="text-white"],
+  .light-theme [class~="bg-zinc-900"][class~="text-white"],
+  .light-theme [class~="bg-zinc-850"][class~="text-white"],
+  .light-theme [class~="bg-zinc-800"][class~="text-white"] {
+    background-color: #18181b !important;
+    color: #ffffff !important;
+    border-color: #27272a !important;
+  }
+
+  .light-theme button[class~="bg-zinc-900"]:hover,
+  .light-theme button[class~="bg-zinc-850"]:hover,
+  .light-theme button[class~="bg-zinc-800"]:hover {
+    background-color: #27272a !important;
+    color: #ffffff !important;
+  }
 
   /* Viền */
   .light-theme [class~="border-zinc-950"] { border-color: #e4e4e7 !important; }
@@ -253,15 +274,29 @@ const LIGHT_THEME_CSS = `
   .light-theme [class~="text-rose-400"] { color: #be123c !important; }
 
   /* Input / textarea / select */
-  .light-theme input,
+  .light-theme input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
   .light-theme textarea,
-  .light-theme select {
-    color: #18181b;
-    caret-color: #18181b;
+  .light-theme select,
+  .light-theme .Input {
+    background-color: #ffffff !important;
+    border-color: #d4d4d8 !important;
+    color: #18181b !important;
+    caret-color: #18181b !important;
+    color-scheme: light !important;
+  }
+
+  .light-theme input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):focus,
+  .light-theme textarea:focus,
+  .light-theme select:focus,
+  .light-theme .Input:focus {
+    background-color: #ffffff !important;
+    border-color: #f43f5e !important;
+    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.12) !important;
   }
 
   .light-theme input::placeholder,
-  .light-theme textarea::placeholder {
+  .light-theme textarea::placeholder,
+  .light-theme .Input::placeholder {
     color: #a1a1aa !important;
   }
 

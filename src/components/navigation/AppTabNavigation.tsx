@@ -348,8 +348,8 @@ export const AppTabNavigation: React.FC<AppTabNavigationProps> = ({
                   onClick={() => onTabChange(cat.targetTab)}
                   className={`h-8 sm:h-8.5 px-2.5 sm:px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer select-none whitespace-nowrap ${
                     isCatActive
-                      ? 'bg-zinc-850 text-white shadow-xs font-bold'
-                      : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'
+                      ? 'bg-zinc-900 text-white shadow-xs font-bold'
+                      : 'text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100'
                   }`}
                   title={`Chuyển đến phân hệ ${cat.label}`}
                 >
@@ -464,8 +464,8 @@ export const AppTabNavigation: React.FC<AppTabNavigationProps> = ({
                   onClick={() => onTabChange(tab.key)}
                   className={`shrink-0 min-h-[36px] sm:min-h-[32px] px-3 sm:px-2.5 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 whitespace-nowrap transition-all cursor-pointer select-none active:scale-95 ${
                     isActive
-                      ? 'bg-zinc-850 text-white font-bold shadow-xs border border-zinc-700'
-                      : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'
+                      ? 'bg-zinc-900 text-white font-bold shadow-xs border border-zinc-800'
+                      : 'text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100'
                   }`}
                   title={tab.description}
                 >
@@ -533,8 +533,8 @@ export const AppTabNavigation: React.FC<AppTabNavigationProps> = ({
                     onClick={() => onTabChange(tab.key)}
                     className={`shrink-0 min-h-[34px] sm:min-h-[30px] px-2.5 py-1.5 rounded-lg text-[11px] font-mono flex items-center gap-1.5 whitespace-nowrap transition-all cursor-pointer select-none active:scale-95 ${
                       isActive
-                        ? 'bg-zinc-850 text-white font-bold shadow-xs border border-zinc-700'
-                        : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'
+                        ? 'bg-zinc-900 text-white font-bold shadow-xs border border-zinc-800'
+                        : 'text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100'
                     }`}
                     title={tab.description}
                   >
@@ -814,7 +814,7 @@ export const AppTabNavigation: React.FC<AppTabNavigationProps> = ({
               <button
                 type="button"
                 onClick={() => setShowAllTabsSheet(false)}
-                className="px-4 py-1.5 rounded-lg bg-zinc-900 text-white font-medium text-xs cursor-pointer"
+                className="px-4 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white font-medium text-xs cursor-pointer transition-colors"
               >
                 Đóng
               </button>
