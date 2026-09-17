@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ClipboardList, Crown, Network, PackagePlus, Sparkles, Tag, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ClipboardList, Crown, Network, PackagePlus, Sparkles, Tag, Trash2, X } from 'lucide-react';
 import { LoadedJarSession } from '../../types/jar';
 import { QuestPanel } from '../quests/QuestPanel';
 import { MetadataVersionModal } from './MetadataVersionModal';
@@ -25,6 +25,7 @@ export function PatchWorkspaceBar({
 }: PatchWorkspaceBarProps) {
   const [showQuestPanel, setShowQuestPanel] = useState(false);
   const [showMetadataModal, setShowMetadataModal] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const operations = getPatchWorkspaceOperations(session);
   const metadata = getWorkspaceMetadata(session);
 
@@ -41,7 +42,72 @@ export function PatchWorkspaceBar({
 
   return (
     <>
-      <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50/80 px-2.5 py-1.5 flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none touch-pan-x">
+      {/* Phiên bản thu gọn trên Mobile khi chưa bấm mở rộng */}
+      <div className={`md:hidden shrink-0 rounded-lg border border-emerald-200 bg-emerald-50/90 px-2 py-1 items-center justify-between gap-1.5 ${
+        mobileExpanded ? 'hidden' : 'flex'
+      }`}>
+        <button
+          type="button"
+          onClick={() => setShowMetadataModal(true)}
+          className="flex items-center gap-1 text-[11px] font-semibold text-emerald-950 truncate min-w-0"
+          title="Chỉnh sửa Tên file và Phiên bản"
+        >
+          <Tag className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          <span className="font-mono max-w-[130px] truncate">{metadata.exportFileName}</span>
+          <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-mono text-[9px] font-bold border border-emerald-200 shrink-0">
+            v{metadata.version}
+          </span>
+        </button>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              bumpSessionVersion(session, metadata.incrementStrategy, 'MANUAL');
+              onChanged();
+            }}
+            className="h-6 px-1.5 rounded border border-emerald-300 bg-white text-[10px] font-mono font-bold text-emerald-800 flex items-center gap-0.5 active:scale-95"
+            title="Tăng phiên bản nhanh"
+          >
+            <Sparkles className="w-2.5 h-2.5 text-amber-500" />
+            <span>+1</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowQuestPanel(true)}
+            className="h-6 px-1.5 rounded border border-indigo-200 bg-white text-[10px] font-semibold text-indigo-700 flex items-center gap-1 active:scale-95"
+          >
+            <ClipboardList className="w-3 h-3" />
+            <span className="hidden xs:inline">Quest</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileExpanded(true)}
+            className="h-6 px-1.5 rounded border border-emerald-200 bg-white text-[10px] font-mono text-emerald-800 flex items-center gap-1 active:scale-95"
+            title="Xem chi tiết các patch"
+          >
+            <span className="font-bold">{operations.length}</span>
+            <ChevronDown className="w-3 h-3 text-emerald-600" />
+          </button>
+        </div>
+      </div>
+
+      {/* Thanh Workspace đầy đủ (luôn hiện trên md+, hoặc khi mobileExpanded trên mobile) */}
+      <div className={`shrink-0 rounded-lg border border-emerald-200 bg-emerald-50/80 px-2.5 py-1.5 items-center gap-2 min-w-0 overflow-x-auto scrollbar-none touch-pan-x ${
+        mobileExpanded ? 'flex' : 'hidden md:flex'
+      }`}>
+        {/* Nút thu gọn trên Mobile */}
+        <button
+          type="button"
+          onClick={() => setMobileExpanded(false)}
+          className="md:hidden shrink-0 h-7 px-1.5 rounded-md border border-emerald-300 bg-white text-emerald-800 flex items-center gap-0.5 text-[10px] font-semibold"
+          title="Thu gọn"
+        >
+          <ChevronUp className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Ẩn</span>
+        </button>
         <button
           id="open-metadata-modal-button"
           type="button"

@@ -233,6 +233,11 @@ export function BossPanel({ session, onDraftsUpdated }: BossPanelProps) {
   );
 }
 
+const inputClasses = "w-full h-10 sm:h-8.5 px-3 rounded-lg border border-zinc-700 bg-zinc-950 text-[16px] sm:text-xs text-zinc-100 font-mono focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 shadow-2xs transition-colors";
+const labelClasses = "block text-[11px] font-semibold text-zinc-300 font-mono mb-1";
+const modalInputClasses = "w-full h-10 sm:h-8.5 px-3 rounded-lg border border-zinc-300 bg-white text-[16px] sm:text-xs text-zinc-900 font-mono focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-100 shadow-2xs transition-colors";
+const modalLabelClasses = "block text-[11px] font-semibold text-zinc-700 font-mono mb-1";
+
 function BossCreatorModal({ session, snapshot, onClose, onCreated }: { session: LoadedJarSession; snapshot: BossAnalysisSnapshot; onClose: () => void; onCreated: (boss: WorkspaceNewBossOperation) => void }) {
   const [cloneIndex, setCloneIndex] = useState(snapshot.bosses[0]?.index ?? 0);
   const source = snapshot.bosses.find((boss) => boss.index === cloneIndex) ?? snapshot.bosses[0];
@@ -271,29 +276,46 @@ function BossCreatorModal({ session, snapshot, onClose, onCreated }: { session: 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl flex flex-col">
-        <div className="h-12 px-4 border-b border-zinc-200 bg-white flex items-center justify-between">
+    <div className="fixed inset-0 z-50 bg-zinc-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+      <div className="w-full max-w-4xl max-h-[94vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl flex flex-col">
+        <div className="h-12 px-4 border-b border-zinc-200 bg-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <Crown className="w-4 h-4 text-rose-500" />
             <strong className="text-sm text-zinc-900">Tạo boss thật</strong>
             <span className="text-[9px] text-emerald-600 font-mono">ghi vào a/a/d.class</span>
           </div>
-          <button type="button" onClick={onClose} className="p-1 rounded text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-rose-200">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="p-4 overflow-y-auto space-y-4 bg-zinc-50/50">
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[10px] text-emerald-700 leading-relaxed">Boss mới được thêm vào boss manager thật, không phải chỉ hiện trên panel. Writer tự hook map gate để char ID mới có thể spawn ở map đã chọn.</div>
+        <div className="p-3 sm:p-4 overflow-y-auto space-y-4 bg-zinc-50/60">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-800 leading-relaxed">
+            Boss mới được thêm vào boss manager thật, không phải chỉ hiện trên panel. Writer tự hook map gate để char ID mới có thể spawn ở map đã chọn.
+          </div>
           <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-4">
             <div className="space-y-3">
               <NpcBodyPreview session={session} head={head} body={body} leg={leg} alt={name} title="Preview boss mới" compact />
-              <label className="block"><span className="CreatorLabel">Clone boss nền</span><select value={cloneIndex} onChange={(e) => applyClone(Number(e.target.value))} className="CreatorInput">{snapshot.bosses.map((boss) => <option key={boss.index} value={boss.index}>#{boss.index} · {boss.name}</option>)}</select></label>
-              <div className="text-[9px] text-zinc-500">Clone chỉ dùng để lấy nhanh ngoại hình / HP / damage / map. Boss mới vẫn có char ID riêng.</div>
+              <div>
+                <label className={modalLabelClasses}>Clone boss nền</label>
+                <select value={cloneIndex} onChange={(e) => applyClone(Number(e.target.value))} className={modalInputClasses}>
+                  {snapshot.bosses.map((boss) => <option key={boss.index} value={boss.index}>#{boss.index} · {boss.name}</option>)}
+                </select>
+              </div>
+              <div className="text-[10px] text-zinc-500">Clone chỉ dùng để lấy nhanh ngoại hình / HP / damage / map. Boss mới vẫn có char ID riêng.</div>
             </div>
-            <div className="grid grid-cols-2 gap-3 content-start">
-              <label><span className="CreatorLabel">Tên boss</span><input value={name} onChange={(e) => setName(e.target.value)} className="CreatorInput" /></label>
-              <label><span className="CreatorLabel">Char ID mới</span><div className="flex gap-1"><input type="number" value={charId} onChange={(e) => setCharId(Math.round(Number(e.target.value)))} className={`CreatorInput ${duplicated ? '!border-red-400' : ''}`} /><button type="button" onClick={() => setCharId(allocateId())} className="px-2 rounded bg-white border border-zinc-300 text-[9px] text-zinc-700 whitespace-nowrap hover:bg-zinc-50 focus:outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100">Tự cấp</button></div><div className={`mt-1 text-[9px] ${duplicated ? 'text-red-500' : 'text-emerald-600'}`}>{duplicated ? 'ID đang bị trùng' : 'ID đang trống'}</div></label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 content-start">
+              <div>
+                <label className={modalLabelClasses}>Tên boss</label>
+                <input value={name} onChange={(e) => setName(e.target.value)} className={modalInputClasses} placeholder="VD: Broly Siêu Cấp" />
+              </div>
+              <div>
+                <label className={modalLabelClasses}>Char ID mới (số âm)</label>
+                <div className="flex gap-1.5">
+                  <input type="number" value={charId} onChange={(e) => setCharId(Math.round(Number(e.target.value)))} className={`${modalInputClasses} ${duplicated ? '!border-red-500 !ring-red-200' : ''}`} />
+                  <button type="button" onClick={() => setCharId(allocateId())} className="px-3 rounded-lg bg-zinc-100 border border-zinc-300 text-xs font-semibold text-zinc-700 whitespace-nowrap hover:bg-zinc-200 cursor-pointer">Tự cấp</button>
+                </div>
+                <div className={`mt-1 text-[10px] font-mono ${duplicated ? 'text-red-500 font-bold' : 'text-emerald-600'}`}>{duplicated ? 'ID đang bị trùng!' : 'ID hợp lệ'}</div>
+              </div>
               <CreatorNum label="Map ID" value={mapId} onChange={setMapId} min={0} />
               <CreatorNum label="Spawn X" value={spawnX} onChange={setSpawnX} min={0} />
               <CreatorNum label="HP" value={hp} onChange={setHp} min={1} />
@@ -303,16 +325,48 @@ function BossCreatorModal({ session, snapshot, onClose, onCreated }: { session: 
               <CreatorNum label="Leg" value={leg} onChange={setLeg} min={0} />
             </div>
           </div>
-          {error && <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-[10px] text-red-600">{error}</div>}
+          {error && <div className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-600 font-mono">{error}</div>}
         </div>
-        <div className="p-3 border-t border-zinc-200 bg-white flex justify-end gap-2"><button type="button" onClick={onClose} className="px-3 py-1.5 rounded border border-zinc-300 bg-white text-[10px] text-zinc-700 hover:bg-zinc-50 focus:outline-none focus:border-rose-400">Hủy</button><button type="button" onClick={create} disabled={duplicated || !name.trim()} className="px-4 py-1.5 rounded bg-rose-600 hover:bg-rose-500 disabled:bg-zinc-200 disabled:text-zinc-500 disabled:cursor-not-allowed text-white text-[10px] font-bold flex items-center gap-1.5"><Plus className="w-3 h-3" />Thêm vào Workspace</button></div>
+        <div className="p-3 border-t border-zinc-200 bg-white flex justify-end gap-2 shrink-0">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-zinc-300 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer">Hủy</button>
+          <button type="button" onClick={create} disabled={duplicated || !name.trim()} className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs">
+            <Plus className="w-3.5 h-3.5" />Thêm vào Workspace
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function QueuedBossDetail({ session, boss, onDelete }: { session: LoadedJarSession; boss: WorkspaceNewBossOperation; onDelete: () => void }) {
-  return <div className="h-full overflow-y-auto p-4 space-y-4"><div className="flex items-center justify-between"><div><div className="text-[9px] uppercase text-emerald-400 font-mono">Boss mới · chờ build</div><h3 className="text-lg font-bold text-zinc-100">{boss.name}</h3><div className="text-[10px] text-zinc-500 font-mono">char {boss.charId} · map {boss.mapId} · clone nền #{boss.cloneBossIndex}</div></div><button onClick={onDelete} className="px-3 py-1.5 rounded border border-red-800 bg-red-950/20 text-red-400 text-[10px] flex items-center gap-1"><Trash2 className="w-3 h-3" />Xóa</button></div><div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-4"><NpcBodyPreview session={session} head={boss.head} body={boss.body} leg={boss.leg} alt={boss.name} title="Boss mới" compact /><div className="grid grid-cols-2 gap-2"><Box label="HP" value={boss.hp.toLocaleString('vi-VN')} /><Box label="Damage" value={boss.damage.toLocaleString('vi-VN')} /><Box label="Map" value={boss.mapId} /><Box label="Spawn X" value={boss.spawnX} /><Box label="Head / Body / Leg" value={`${boss.head} / ${boss.body} / ${boss.leg}`} /><Box label="Char ID" value={boss.charId} /></div></div><div className="rounded-lg border border-violet-900/40 bg-violet-950/10 p-3 text-[10px] text-zinc-400">Bấm <strong className="text-violet-300">Test Workspace</strong> để writer thêm definition boss vào <code>a/a/d.class</code> và hook map gate. Sau khi VALIDATED mới xuất JAR.</div></div>;
+  return (
+    <div className="h-full overflow-y-auto p-3 sm:p-4 space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <div className="text-[10px] uppercase text-emerald-400 font-mono font-bold">Boss mới · chờ build</div>
+          <h3 className="text-lg font-bold text-zinc-100">{boss.name}</h3>
+          <div className="text-[11px] text-zinc-400 font-mono">char {boss.charId} · map {boss.mapId} · clone nền #{boss.cloneBossIndex}</div>
+        </div>
+        <button onClick={onDelete} className="h-9 px-3 rounded-lg border border-red-800/80 bg-red-950/40 hover:bg-red-900/60 text-red-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+          <Trash2 className="w-3.5 h-3.5" />Xóa boss này
+        </button>
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-4">
+        <NpcBodyPreview session={session} head={boss.head} body={boss.body} leg={boss.leg} alt={boss.name} title="Boss mới" compact />
+        <div className="grid grid-cols-2 gap-2">
+          <Box label="HP" value={boss.hp.toLocaleString('vi-VN')} />
+          <Box label="Damage" value={boss.damage.toLocaleString('vi-VN')} />
+          <Box label="Map" value={boss.mapId} />
+          <Box label="Spawn X" value={boss.spawnX} />
+          <Box label="Head / Body / Leg" value={`${boss.head} / ${boss.body} / ${boss.leg}`} />
+          <Box label="Char ID" value={boss.charId} />
+        </div>
+      </div>
+      <div className="rounded-xl border border-violet-900/40 bg-violet-950/20 p-3 text-xs text-zinc-300 leading-relaxed">
+        Bấm <strong className="text-violet-300">Test Workspace</strong> để writer thêm definition boss vào <code className="text-violet-200">a/a/d.class</code> và hook map gate. Sau khi VALIDATED mới xuất JAR.
+      </div>
+    </div>
+  );
 }
 
 function ExistingBossDetail({ session, snapshot, boss, onChanged }: { session: LoadedJarSession; snapshot: BossAnalysisSnapshot; boss: BossDefinition; onChanged: () => void }) {
@@ -321,18 +375,287 @@ function ExistingBossDetail({ session, snapshot, boss, onChanged }: { session: L
   const save = (next: BossDraft) => { setBossDraft(session, boss, next); setDraft(getBossDraft(session, boss)); onChanged(); };
   const patch = (value: Partial<BossDraft>) => save({ ...draft, ...value });
   const rules = getBossDropRules(boss, snapshot.itemAnalysis);
-  return <div className="h-full overflow-y-auto p-3 space-y-3"><div className="flex items-center justify-between"><div><div className="text-[9px] text-rose-400 font-mono">Boss có sẵn #{boss.index}</div><div className="text-sm font-bold text-zinc-100">{draft.name}</div></div><button disabled={!isBossDraftDirty(boss,draft)} onClick={() => { setDraft(resetBossDraft(session,boss)); onChanged(); }} className="px-2.5 py-1 rounded border border-zinc-700 text-[10px] text-zinc-400 disabled:opacity-30 flex items-center gap-1"><RotateCcw className="w-3 h-3" />Hoàn tác</button></div><div className="grid grid-cols-1 xl:grid-cols-[250px_1fr] gap-3"><NpcBodyPreview session={session} head={draft.head} body={draft.body} leg={draft.leg} alt={draft.name} title="Boss" compact /><div className="grid grid-cols-2 2xl:grid-cols-4 gap-2"><Text label="Tên" value={draft.name} onChange={(v)=>patch({name:v})}/><Num label="Spawn X" value={draft.spawnX} onChange={(v)=>patch({spawnX:v})} min={0}/><NullableNum label="HP" value={draft.hpOverride} placeholder={String(boss.hp)} onChange={(v)=>patch({hpOverride:v})}/><NullableNum label="Damage" value={draft.damageOverride} placeholder={String(boss.damage)} onChange={(v)=>patch({damageOverride:v})}/><Num label="Head" value={draft.head} onChange={(v)=>patch({head:v})} min={0}/><Num label="Body" value={draft.body} onChange={(v)=>patch({body:v})} min={0}/><Num label="Leg" value={draft.leg} onChange={(v)=>patch({leg:v})} min={0}/></div></div><DropEditor session={session} snapshot={snapshot} draft={draft} rules={rules} onSave={save}/></div>;
+
+  return (
+    <div className="h-full overflow-y-auto p-3 sm:p-4 space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-zinc-800">
+        <div>
+          <div className="text-[10px] text-rose-400 font-mono font-bold">Boss có sẵn #{boss.index}</div>
+          <div className="text-base sm:text-lg font-bold text-zinc-100">{draft.name}</div>
+        </div>
+        <button
+          disabled={!isBossDraftDirty(boss, draft)}
+          onClick={() => { setDraft(resetBossDraft(session, boss)); onChanged(); }}
+          className="h-9 px-3 rounded-lg border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />Hoàn tác
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[250px_1fr] gap-4">
+        <NpcBodyPreview session={session} head={draft.head} body={draft.body} leg={draft.leg} alt={draft.name} title="Boss" compact />
+        <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-2.5">
+          <Text label="Tên boss" value={draft.name} onChange={(v) => patch({ name: v })} />
+          <Num label="Spawn X" value={draft.spawnX} onChange={(v) => patch({ spawnX: v })} min={0} step={10} />
+          <NullableNum label="HP" value={draft.hpOverride} placeholder={String(boss.hp)} onChange={(v) => patch({ hpOverride: v })} step={10000} />
+          <NullableNum label="Damage" value={draft.damageOverride} placeholder={String(boss.damage)} onChange={(v) => patch({ damageOverride: v })} step={1000} />
+          <Num label="Head" value={draft.head} onChange={(v) => patch({ head: v })} min={0} />
+          <Num label="Body" value={draft.body} onChange={(v) => patch({ body: v })} min={0} />
+          <Num label="Leg" value={draft.leg} onChange={(v) => patch({ leg: v })} min={0} />
+        </div>
+      </div>
+
+      <DropEditor session={session} snapshot={snapshot} draft={draft} rules={rules} onSave={save} />
+    </div>
+  );
 }
 
-function DropEditor({ session, snapshot, draft, rules, onSave }: { session: LoadedJarSession; snapshot: BossAnalysisSnapshot; draft: BossDraft; rules: BossDropRule[]; onSave: (draft: BossDraft)=>void }) {
+function DropEditor({ session, snapshot, draft, rules, onSave }: { session: LoadedJarSession; snapshot: BossAnalysisSnapshot; draft: BossDraft; rules: BossDropRule[]; onSave: (draft: BossDraft) => void }) {
   const add = () => onSave({ ...draft, customDrops: [...draft.customDrops, createCustomBossDrop()] });
-  const update = (id:string, patch:Partial<BossCustomDrop>) => onSave({ ...draft, customDrops: draft.customDrops.map((d)=>d.id===id?{...d,...patch}:d) });
-  return <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 overflow-hidden"><div className="h-10 px-3 flex items-center justify-between border-b border-zinc-800"><strong className="text-xs text-zinc-100">Drop boss</strong><button onClick={add} className="px-2 py-1 rounded border border-amber-700 text-[9px] text-amber-300 flex items-center gap-1"><Plus className="w-3 h-3" />Thêm drop</button></div><div className="p-2 space-y-2">{rules.map((r)=><div key={r.key} className="rounded border border-zinc-800 p-2 text-[10px] text-zinc-400"><span className="text-zinc-200">{r.title}</span> · {r.chancePercent}% · SL {r.quantity}</div>)}{draft.customDrops.map((drop)=>{const item=resolveBossItem(snapshot.itemAnalysis,Number(drop.itemId)||0);return <div key={drop.id} className="grid grid-cols-[38px_1fr_90px_80px_30px] gap-1 items-center"><SmallImagePreview session={session} imageId={item.iconId} alt={item.name} variant="icon"/><input type="number" value={drop.itemId} onChange={(e)=>update(drop.id,{itemId:e.target.value})} className="Input" placeholder="Item ID"/><input type="number" value={drop.chancePercent} min={0} max={100} onChange={(e)=>update(drop.id,{chancePercent:Number(e.target.value)})} className="Input"/><input type="number" value={drop.quantity} min={1} onChange={(e)=>update(drop.id,{quantity:Number(e.target.value)})} className="Input"/><button onClick={()=>onSave({...draft,customDrops:draft.customDrops.filter((d)=>d.id!==drop.id)})} className="text-red-400"><Trash2 className="w-3.5 h-3.5"/></button></div>})}</div></div>;
+  const update = (id: string, patch: Partial<BossCustomDrop>) => onSave({ ...draft, customDrops: draft.customDrops.map((d) => d.id === id ? { ...d, ...patch } : d) });
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 overflow-hidden">
+      <div className="px-3 py-2.5 flex items-center justify-between border-b border-zinc-800 bg-zinc-900/60">
+        <div>
+          <strong className="text-xs font-bold text-zinc-100">Drop của boss</strong>
+          <span className="text-[10px] text-zinc-400 font-mono ml-2">({rules.length} mặc định, {draft.customDrops.length} custom)</span>
+        </div>
+        <button
+          type="button"
+          onClick={add}
+          className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+        >
+          <Plus className="w-3.5 h-3.5" /><span>Thêm drop</span>
+        </button>
+      </div>
+
+      <div className="p-3 space-y-2.5">
+        {rules.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-mono text-zinc-500 uppercase">Drop có sẵn từ bytecode</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {rules.map((r) => (
+                <div key={r.key} className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-2 text-xs text-zinc-400 flex items-center justify-between">
+                  <span className="text-zinc-200 font-medium truncate">{r.title}</span>
+                  <span className="font-mono text-amber-400 shrink-0 ml-2">{r.chancePercent}% · x{r.quantity}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {draft.customDrops.length > 0 && (
+          <div className="space-y-2 pt-2">
+            <div className="text-[10px] font-mono text-zinc-500 uppercase">Custom drop thêm mới ({draft.customDrops.length})</div>
+            {draft.customDrops.map((drop) => {
+              const item = resolveBossItem(snapshot.itemAnalysis, Number(drop.itemId) || 0);
+              return (
+                <div key={drop.id} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <SmallImagePreview session={session} imageId={item.iconId} alt={item.name} variant="icon" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-zinc-200 truncate">{item.name || `Item #${drop.itemId}`}</div>
+                        <div className="text-[10px] text-zinc-500 font-mono">Icon ID: {item.iconId || '?'}</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onSave({ ...draft, customDrops: draft.customDrops.filter((d) => d.id !== drop.id) })}
+                      className="h-8 px-2.5 rounded-lg border border-red-900/60 bg-red-950/30 hover:bg-red-900/50 text-red-400 text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Xóa custom drop này"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span className="sm:inline">Xóa</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                      <label className={labelClasses}>Item ID</label>
+                      <input
+                        type="number"
+                        value={drop.itemId}
+                        onChange={(e) => update(drop.id, { itemId: e.target.value })}
+                        className={inputClasses}
+                        placeholder="VD: 190"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClasses}>Tỷ lệ (%)</label>
+                      <div className="flex items-center rounded-lg border border-zinc-700 bg-zinc-950 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => update(drop.id, { chancePercent: Math.max(0, drop.chancePercent - 5) })}
+                          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold cursor-pointer shrink-0"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          value={drop.chancePercent}
+                          min={0}
+                          max={100}
+                          onChange={(e) => update(drop.id, { chancePercent: Number(e.target.value) })}
+                          className="w-full h-10 sm:h-8.5 px-2 bg-transparent text-center text-[16px] sm:text-xs text-zinc-100 font-mono focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => update(drop.id, { chancePercent: Math.min(100, drop.chancePercent + 5) })}
+                          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold cursor-pointer shrink-0"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelClasses}>Số lượng</label>
+                      <div className="flex items-center rounded-lg border border-zinc-700 bg-zinc-950 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => update(drop.id, { quantity: Math.max(1, drop.quantity - 1) })}
+                          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold cursor-pointer shrink-0"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          value={drop.quantity}
+                          min={1}
+                          onChange={(e) => update(drop.id, { quantity: Number(e.target.value) })}
+                          className="w-full h-10 sm:h-8.5 px-2 bg-transparent text-center text-[16px] sm:text-xs text-zinc-100 font-mono focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => update(drop.id, { quantity: drop.quantity + 1 })}
+                          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold cursor-pointer shrink-0"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function Chip({ children }: { children: React.ReactNode }) { return <span className="hidden lg:inline px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[9px] text-zinc-500 font-mono">{children}</span>; }
-function Box({ label, value }: { label:string; value:string|number }) { return <div className="p-2 rounded bg-zinc-950 border border-zinc-800"><div className="text-[8px] uppercase text-zinc-600">{label}</div><div className="text-[11px] text-zinc-200 font-mono">{value}</div></div>; }
-function Text({ label,value,onChange }:{label:string;value:string;onChange:(v:string)=>void}) { return <label><span className="Label">{label}</span><input value={value} onChange={(e)=>onChange(e.target.value)} className="Input"/></label>; }
-function Num({ label,value,onChange,min }:{label:string;value:number;onChange:(v:number)=>void;min?:number}) { return <label><span className="Label">{label}</span><input type="number" min={min} value={value} onChange={(e)=>onChange(Math.round(Number(e.target.value)||0))} className="Input"/></label>; }
-function CreatorNum({ label,value,onChange,min }:{label:string;value:number;onChange:(v:number)=>void;min?:number}) { return <label><span className="CreatorLabel">{label}</span><input type="number" min={min} value={value} onChange={(e)=>onChange(Math.round(Number(e.target.value)||0))} className="CreatorInput"/></label>; }
-function NullableNum({label,value,placeholder,onChange}:{label:string;value:number|null;placeholder:string;onChange:(v:number|null)=>void}) { return <label><span className="Label">{label}</span><input type="number" min={1} value={value ?? ''} placeholder={placeholder} onChange={(e)=>onChange(e.target.value===''?null:Math.max(1,Math.round(Number(e.target.value)||1)))} className="Input"/></label>; }
+function Box({ label, value }: { label:string; value:string|number }) { return <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800"><div className="text-[9px] uppercase text-zinc-500 font-semibold">{label}</div><div className="text-xs text-zinc-200 font-mono font-bold mt-0.5">{value}</div></div>; }
+
+function Text({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className={labelClasses}>{label}</label>
+      <input value={value} onChange={(e) => onChange(e.target.value)} className={inputClasses} />
+    </div>
+  );
+}
+
+function Num({ label, value, onChange, min, step = 1 }: { label: string; value: number; onChange: (v: number) => void; min?: number; step?: number }) {
+  const adjust = (delta: number) => {
+    const next = (value || 0) + delta;
+    onChange(min !== undefined ? Math.max(min, next) : next);
+  };
+
+  return (
+    <div>
+      <label className={labelClasses}>{label}</label>
+      <div className="flex items-center rounded-lg border border-zinc-700 bg-zinc-950 overflow-hidden focus-within:border-rose-500 focus-within:ring-2 focus-within:ring-rose-500/20">
+        <button
+          type="button"
+          onClick={() => adjust(-step)}
+          disabled={min !== undefined && value <= min}
+          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-200 font-bold cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed shrink-0 border-r border-zinc-800 select-none"
+        >
+          -
+        </button>
+        <input
+          type="number"
+          min={min}
+          value={value}
+          onChange={(e) => onChange(Math.round(Number(e.target.value) || 0))}
+          className="w-full h-10 sm:h-8.5 px-2 bg-transparent text-center text-[16px] sm:text-xs text-zinc-100 font-mono font-semibold focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => adjust(step)}
+          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-200 font-bold cursor-pointer shrink-0 border-l border-zinc-800 select-none"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CreatorNum({ label, value, onChange, min }: { label: string; value: number; onChange: (v: number) => void; min?: number }) {
+  return (
+    <div>
+      <label className={modalLabelClasses}>{label}</label>
+      <input
+        type="number"
+        min={min}
+        value={value}
+        onChange={(e) => onChange(Math.round(Number(e.target.value) || 0))}
+        className={modalInputClasses}
+      />
+    </div>
+  );
+}
+
+function NullableNum({ label, value, placeholder, onChange, step = 1000 }: { label: string; value: number | null; placeholder: string; onChange: (v: number | null) => void; step?: number }) {
+  const currentVal = (value ?? Number(placeholder)) || 0;
+  const adjust = (delta: number) => {
+    const next = Math.max(1, currentVal + delta);
+    onChange(next);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-[11px] font-semibold text-zinc-300 font-mono">{label}</label>
+        {value !== null && (
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className="text-[10px] text-zinc-500 hover:text-zinc-300 font-mono cursor-pointer"
+            title="Dùng lại giá trị gốc"
+          >
+            Dùng gốc ({placeholder})
+          </button>
+        )}
+      </div>
+      <div className="flex items-center rounded-lg border border-zinc-700 bg-zinc-950 overflow-hidden focus-within:border-rose-500 focus-within:ring-2 focus-within:ring-rose-500/20">
+        <button
+          type="button"
+          onClick={() => adjust(-step)}
+          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-200 font-bold cursor-pointer shrink-0 border-r border-zinc-800 select-none"
+        >
+          -
+        </button>
+        <input
+          type="number"
+          min={1}
+          value={value ?? ''}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value === '' ? null : Math.max(1, Math.round(Number(e.target.value) || 1)))}
+          className="w-full h-10 sm:h-8.5 px-2 bg-transparent text-center text-[16px] sm:text-xs text-zinc-100 placeholder-zinc-500 font-mono font-semibold focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => adjust(step)}
+          className="h-10 sm:h-8.5 px-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-200 font-bold cursor-pointer shrink-0 border-l border-zinc-800 select-none"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}

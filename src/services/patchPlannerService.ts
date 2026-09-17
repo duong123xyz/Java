@@ -67,7 +67,6 @@ export async function getSessionClassInfo(
   // Look up in session.zip directly or fallback to session.entries
   const zipEntry = session.zip?.file(exactPath) || session.entries.find((e) => e.path === exactPath)?.zipEntry;
   if (!zipEntry) {
-    console.error(`[getSessionClassInfo] Entry not found in JAR: '${exactPath}'. Session total entries: ${session.entries.length}`);
     return null;
   }
 

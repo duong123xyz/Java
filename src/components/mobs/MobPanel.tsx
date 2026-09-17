@@ -10,8 +10,11 @@ import {
   Loader2,
   MapPinned,
   PackagePlus,
+  RotateCcw,
   Save,
   Search,
+  Sliders,
+  Sparkles,
   Swords,
   Trash2,
   Zap,
@@ -98,6 +101,7 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   const [spawnFilter, setSpawnFilter] = useState<SpawnFilter>('all');
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [mobileTab, setMobileTab] = useState<'list' | 'editor'>('list');
+  const [mobSubTab, setMobSubTab] = useState<'stats' | 'drops' | 'maps' | 'sprite'>('stats');
   const [revision, setRevision] = useState(0);
   const [dropRules, setDropRules] = useState<MobDropRule[]>([]);
   const [savedRuleId, setSavedRuleId] = useState<string | null>(null);
@@ -296,23 +300,24 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-2">
-      <div className="shrink-0 rounded-xl border border-zinc-200 bg-white shadow-sm px-3 py-2.5 flex items-center justify-between gap-3">
+    <div className="h-full min-h-0 flex flex-col gap-1.5 sm:gap-2">
+      {/* 1. Header Banner - Ẩn trên mobile khi đang ở chế độ Soạn thảo để tối đa hóa không gian nhìn */}
+      <div className={`shrink-0 rounded-xl border border-zinc-200 bg-white shadow-2xs px-3 py-2 sm:py-2.5 items-center justify-between gap-3 ${
+        mobileTab === 'editor' ? 'hidden xl:flex' : 'flex'
+      }`}>
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
             <Bug className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
               <span className="text-sm font-bold text-zinc-900">Quái</span>
               <Chip>{snapshot.mobs.length} template</Chip>
-              <Chip>{usedMobCount} đang xuất hiện trên map</Chip>
+              <Chip>{usedMobCount} trên map</Chip>
               <Chip>{snapshot.totalSpawnCount} spawn</Chip>
-              <Chip>a/a/a/A.u</Chip>
-              {dirtyCount > 0 && <Chip>{dirtyCount} nháp template</Chip>}
-              {selectedMob && <Chip>{dropRules.length} rule drop</Chip>}
+              {dirtyCount > 0 && <Chip className="text-amber-700 bg-amber-50 border-amber-200">{dirtyCount} nháp</Chip>}
             </div>
-            <div className="text-[10px] text-zinc-500 mt-0.5">
+            <div className="hidden sm:block text-[10px] text-zinc-500 mt-0.5">
               Chỉnh template quái + map xuất hiện + cấu hình vật phẩm rơi riêng từng mob.
             </div>
           </div>
@@ -323,41 +328,34 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
         </div>
       </div>
 
-      <div className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
-        Chọn quái → <strong>Vật phẩm rơi</strong> → gõ tên vật phẩm hoặc ID để chọn. Quantity được lưu đúng theo từng rule.
-      </div>
-
-      {/* Segmented bar trên Mobile */}
-      <div className="flex xl:hidden items-center gap-1 bg-zinc-900 border border-zinc-800 p-1 rounded-xl shrink-0">
+      {/* Segmented bar trên Mobile - chỉ hiện khi ở chế độ danh sách */}
+      <div className={`xl:hidden items-center gap-1 bg-zinc-900 border border-zinc-800 p-1 rounded-xl shrink-0 ${
+        mobileTab === 'editor' ? 'hidden' : 'flex'
+      }`}>
         <button
           type="button"
           onClick={() => setMobileTab('list')}
-          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
-            mobileTab === 'list'
-              ? 'bg-emerald-600 text-white font-bold shadow-xs'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
+          className="flex-1 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 bg-emerald-600 text-white shadow-xs"
         >
           <Bug className="w-3.5 h-3.5" />
-          <span>Danh sách ({visibleMobs.length})</span>
+          <span>Danh sách quái ({visibleMobs.length})</span>
         </button>
-        <button
-          type="button"
-          onClick={() => setMobileTab('editor')}
-          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
-            mobileTab === 'editor'
-              ? 'bg-emerald-600 text-white font-bold shadow-xs'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <span className="truncate max-w-[150px]">
-            {selectedMob ? `Quái: ${draft?.name || selectedMob.name}` : 'Soạn thảo'}
-          </span>
-        </button>
+        {selectedMob && (
+          <button
+            type="button"
+            onClick={() => setMobileTab('editor')}
+            className="flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 text-zinc-400 hover:text-zinc-200"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span className="truncate max-w-[140px]">
+              Sửa: {draft?.name || selectedMob.name}
+            </span>
+          </button>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-2">
-        <aside className={`min-h-0 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col ${
+        <aside className={`min-h-0 rounded-xl border border-zinc-200 bg-white shadow-2xs overflow-hidden flex flex-col ${
           mobileTab === 'editor' ? 'hidden xl:flex' : 'flex'
         }`}>
           <div className="shrink-0 p-2.5 border-b border-zinc-200 space-y-2">
@@ -367,10 +365,19 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tìm tên, mob ID, type, map..."
-                className="w-full pl-8 pr-3 py-2 sm:py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 text-[16px] sm:text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 font-mono"
+                className="w-full pl-8 pr-7 py-2 sm:py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 text-[16px] sm:text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 font-mono"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 text-xs p-1"
+                >
+                  ✕
+                </button>
+              )}
             </div>
-            <div className="flex items-center gap-1 overflow-x-auto">
+            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none touch-pan-x">
               <FilterButton active={spawnFilter === 'all'} onClick={() => setSpawnFilter('all')}>Tất cả</FilterButton>
               <FilterButton active={spawnFilter === 'used'} onClick={() => setSpawnFilter('used')}>Có spawn</FilterButton>
               <FilterButton active={spawnFilter === 'unused'} onClick={() => setSpawnFilter('unused')}>Chưa thấy map</FilterButton>
@@ -379,11 +386,11 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
           </div>
 
           <div className="shrink-0 h-8 px-3 flex items-center justify-between border-b border-zinc-200 bg-zinc-50 text-[9px] text-zinc-500 font-mono">
-            <span>Danh sách quái</span>
-            <span>{visibleMobs.length}/{snapshot.mobs.length}</span>
+            <span>Danh sách quái ({visibleMobs.length}/{snapshot.mobs.length})</span>
+            <span className="text-emerald-700 font-bold">Chạm để chỉnh sửa →</span>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-1.5 space-y-1">
+          <div className="min-h-0 flex-1 overflow-y-auto p-1.5 space-y-1.5">
             {visibleMobs.map((mob) => {
               const rowDraft = getMobDraft(session, mob);
               const rowDirty = isMobDraftDirty(mob, rowDraft);
@@ -395,16 +402,17 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                   onClick={() => {
                     setSelectedRow(mob.rowIndex);
                     setMobileTab('editor');
+                    setMobSubTab('stats');
                   }}
-                  className={`w-full rounded-xl border px-2 py-2 text-left transition cursor-pointer ${
+                  className={`w-full rounded-xl border p-2.5 text-left transition-all cursor-pointer active:scale-[0.98] ${
                     selected
-                      ? 'border-emerald-300 bg-emerald-50'
+                      ? 'border-emerald-500 bg-emerald-50/90 ring-1 ring-emerald-400/50 shadow-xs'
                       : rowDirty
-                        ? 'border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50'
-                        : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                        ? 'border-amber-300 bg-amber-50/60 hover:bg-amber-50'
+                        : 'border-zinc-200 bg-white hover:bg-zinc-50 shadow-2xs'
                   }`}
                 >
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-2.5">
                     <JarImagePreview
                       session={session}
                       path={`x1/mob/${mob.id}/img.png`}
@@ -412,13 +420,16 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                       variant="icon"
                     />
                     <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-[12px] text-zinc-900 truncate">{rowDraft.name}</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">mob #{mob.id} · {getMobTypeLabel(mob.type)}</div>
-                      <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-zinc-600 font-mono">
-                        <span>HP {formatNumber(rowDraft.hp)}</span>
-                        <span>SPD {formatNumber(rowDraft.speed)}</span>
-                        <span>Spawn {mob.totalSpawnCount}</span>
-                        <span>Map {mob.maps.length}</span>
+                      <div className="flex items-center justify-between gap-1">
+                        <div className="font-bold text-[13px] text-zinc-900 truncate">{rowDraft.name}</div>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-600 shrink-0">#{mob.id}</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">{getMobTypeLabel(mob.type)} · {mob.maps.length} map</div>
+                      <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-zinc-700 font-mono">
+                        <span className="bg-rose-50 px-1 py-0.2 rounded text-rose-800">HP {formatNumber(rowDraft.hp)}</span>
+                        <span className="bg-blue-50 px-1 py-0.2 rounded text-blue-800">SPD {formatNumber(rowDraft.speed)}</span>
+                        <span>Spawn: {mob.totalSpawnCount}</span>
+                        <span>Map: {mob.maps.length}</span>
                       </div>
                     </div>
                   </div>
@@ -428,58 +439,140 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
           </div>
         </aside>
 
-        <section className={`min-h-0 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden flex flex-col ${
+        <section className={`min-h-0 rounded-xl border border-zinc-200 bg-white shadow-2xs overflow-hidden flex flex-col ${
           mobileTab === 'list' ? 'hidden xl:flex' : 'flex'
         }`}>
-          {/* Header quay lại trên mobile */}
-          <div className="xl:hidden px-3 py-2 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => setMobileTab('list')}
-              className="px-2.5 py-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              <ChevronRight className="w-4 h-4 rotate-180" />
-              <span>← Trở lại danh sách ({visibleMobs.length})</span>
-            </button>
-            <span className="text-xs font-mono text-zinc-500 truncate max-w-[140px]">
-              {draft?.name || selectedMob?.name}
-            </span>
-          </div>
           {!selectedMob || !draft ? (
-            <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">Chọn một quái để xem chi tiết.</div>
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-zinc-500 text-sm gap-2">
+              <Bug className="w-8 h-8 text-zinc-300" />
+              <span>Chọn một quái từ danh sách để xem và chỉnh sửa chi tiết.</span>
+              <button
+                type="button"
+                onClick={() => setMobileTab('list')}
+                className="xl:hidden px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+              >
+                Mở danh sách quái
+              </button>
+            </div>
           ) : (
             <>
-              <div className="shrink-0 p-3 border-b border-zinc-200 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h2 className="text-lg font-bold text-zinc-900 truncate">{draft.name}</h2>
-                    <Chip>mob #{selectedMob.id}</Chip>
-                    <Chip>{getMobTypeLabel(selectedMob.type)}</Chip>
-                    <Chip>{selectedMob.maps.length} map</Chip>
-                    <Chip>{dropRules.length} rule drop</Chip>
-                    {dirty && <Chip>Đang có nháp template</Chip>}
-                  </div>
-                  <div className="text-[11px] text-zinc-500 mt-1">
-                    Template: <strong>a/a/a/A.u</strong> · Sprite: <strong>x1/mob/{selectedMob.id}/img.png</strong>
+              {/* Header trình soạn thảo quái */}
+              <div className="shrink-0 p-2.5 sm:p-3 border-b border-zinc-200 bg-white flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {/* Nút quay lại danh sách trên mobile */}
+                  <button
+                    type="button"
+                    onClick={() => setMobileTab('list')}
+                    className="xl:hidden h-8.5 px-2.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-semibold flex items-center gap-1 cursor-pointer shrink-0 border border-zinc-200"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5 rotate-180 text-zinc-600" />
+                    <span>Danh sách</span>
+                  </button>
+
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h2 className="text-sm sm:text-base font-bold text-zinc-900 truncate">{draft.name}</h2>
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
+                        #{selectedMob.id}
+                      </span>
+                      {dirty && (
+                        <span className="px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[9px] font-bold border border-emerald-300 animate-pulse">
+                          Đã sửa
+                        </span>
+                      )}
+                    </div>
+                    <div className="hidden sm:block text-[11px] text-zinc-500 font-mono">
+                      {getMobTypeLabel(selectedMob.type)} · {selectedMob.maps.length} map · {dropRules.length} rule drop
+                    </div>
                   </div>
                 </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetMobDraft(session, selectedMob);
+                      setRevision((value) => value + 1);
+                    }}
+                    className="h-8 px-2.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-medium text-zinc-700 cursor-pointer flex items-center gap-1"
+                    title="Khôi phục thông số quái này về bản gốc ban đầu của JAR"
+                  >
+                    <RotateCcw className="w-3 h-3 text-zinc-500" />
+                    <span className="hidden xs:inline">Về gốc</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Subtabs trên Mobile & Tablet để dễ dàng truy cập từng nhóm tính năng */}
+              <div className="2xl:hidden shrink-0 flex items-center gap-1 p-1.5 bg-zinc-100/80 border-b border-zinc-200 overflow-x-auto scrollbar-none touch-pan-x">
                 <button
                   type="button"
-                  onClick={() => {
-                    resetMobDraft(session, selectedMob);
-                    setRevision((value) => value + 1);
-                  }}
-                  className="px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-medium cursor-pointer"
+                  onClick={() => setMobSubTab('stats')}
+                  className={`h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-all ${
+                    mobSubTab === 'stats'
+                      ? 'bg-zinc-900 text-white shadow-xs font-bold'
+                      : 'bg-white text-zinc-700 hover:bg-zinc-50 border border-zinc-200'
+                  }`}
                 >
-                  Trả template về gốc
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Chỉ số quái</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobSubTab('drops')}
+                  className={`h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-all ${
+                    mobSubTab === 'drops'
+                      ? 'bg-zinc-900 text-white shadow-xs font-bold'
+                      : 'bg-white text-zinc-700 hover:bg-zinc-50 border border-zinc-200'
+                  }`}
+                >
+                  <PackagePlus className="w-3.5 h-3.5" />
+                  <span>Vật phẩm rơi</span>
+                  {dropRules.length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800 text-[9px] font-mono font-bold">
+                      {dropRules.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobSubTab('maps')}
+                  className={`h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-all ${
+                    mobSubTab === 'maps'
+                      ? 'bg-zinc-900 text-white shadow-xs font-bold'
+                      : 'bg-white text-zinc-700 hover:bg-zinc-50 border border-zinc-200'
+                  }`}
+                >
+                  <MapPinned className="w-3.5 h-3.5" />
+                  <span>Map ({selectedMob.maps.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobSubTab('sprite')}
+                  className={`h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-all ${
+                    mobSubTab === 'sprite'
+                      ? 'bg-zinc-900 text-white shadow-xs font-bold'
+                      : 'bg-white text-zinc-700 hover:bg-zinc-50 border border-zinc-200'
+                  }`}
+                >
+                  <Bug className="w-3.5 h-3.5" />
+                  <span>Sprite</span>
                 </button>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-auto p-3 space-y-3">
+              {/* Vùng nội dung cuộn */}
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3">
                 <div className="grid grid-cols-1 2xl:grid-cols-[320px_minmax(0,1fr)] gap-3">
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-                      <div className="text-[11px] font-semibold text-zinc-700 mb-2">Sprite quái</div>
+                  {/* Cột trái (Sprite, Quick actions, Thống kê) - Trên 2xl luôn hiện, trên mobile hiện theo tab */}
+                  <div className={`space-y-3 ${mobSubTab !== 'sprite' && mobSubTab !== 'stats' ? 'hidden 2xl:block' : ''}`}>
+                    {/* Sprite preview */}
+                    <div className={`rounded-xl border border-zinc-200 bg-zinc-50 p-3 ${
+                      mobSubTab !== 'sprite' ? 'hidden 2xl:block' : 'block'
+                    }`}>
+                      <div className="text-[11px] font-semibold text-zinc-700 mb-2 flex items-center justify-between">
+                        <span>Sprite quái</span>
+                        <span className="text-[9px] font-mono text-zinc-400">mob/{selectedMob.id}/img.png</span>
+                      </div>
                       <JarImagePreview
                         session={session}
                         path={`x1/mob/${selectedMob.id}/img.png`}
@@ -488,99 +581,122 @@ export function MobPanel({ session, onDraftsUpdated }: MobPanelProps) {
                         showPath
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+
+                    {/* Sửa nhanh chỉ số */}
+                    <div className={`rounded-xl border border-zinc-200 bg-white p-3 shadow-2xs ${
+                      mobSubTab !== 'stats' ? 'hidden 2xl:block' : 'block'
+                    }`}>
+                      <div className="text-[11px] font-semibold text-zinc-800 mb-2 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Sửa nhanh tỉ lệ</span>
+                      </div>
+                      <div className="grid grid-cols-3 sm:grid-cols-2 gap-1.5">
+                        <QuickButton onClick={() => applyNumber('hp', Math.round(draft.hp * 2))}>HP x2</QuickButton>
+                        <QuickButton onClick={() => applyNumber('hp', Math.round(draft.hp * 5))}>HP x5</QuickButton>
+                        <QuickButton onClick={() => applyNumber('percentDamage', Math.round(draft.percentDamage * 2))}>Dmg x2</QuickButton>
+                        <QuickButton onClick={() => applyNumber('percentTiemNang', Math.round(draft.percentTiemNang * 2))}>TNSM x2</QuickButton>
+                        <QuickButton onClick={() => applyNumber('speed', Math.round(draft.speed * 1.5))}>Spd +50%</QuickButton>
+                        <QuickButton onClick={() => applyNumber('rangeMove', Math.round(draft.rangeMove * 1.5))}>Range +50%</QuickButton>
+                      </div>
+                    </div>
+
+                    {/* Thẻ hiển thị chỉ số gốc */}
+                    <div className={`grid grid-cols-2 gap-2 ${
+                      mobSubTab !== 'stats' ? 'hidden 2xl:grid' : 'grid'
+                    }`}>
                       <StatCard icon={<Heart className="w-3.5 h-3.5 text-rose-500" />} label="HP gốc" value={formatNumber(selectedMob.hp)} />
                       <StatCard icon={<Swords className="w-3.5 h-3.5 text-amber-500" />} label="% Damage" value={formatNumber(draft.percentDamage)} />
                       <StatCard icon={<Gauge className="w-3.5 h-3.5 text-blue-500" />} label="Range move" value={formatNumber(draft.rangeMove)} />
                       <StatCard icon={<Zap className="w-3.5 h-3.5 text-violet-500" />} label="% Tiềm năng" value={formatNumber(draft.percentTiemNang)} />
                     </div>
-                    <div className="rounded-xl border border-zinc-200 p-3">
-                      <div className="text-[11px] font-semibold text-zinc-700 mb-2">Sửa nhanh</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <QuickButton onClick={() => applyNumber('hp', Math.round(draft.hp * 2))}>HP x2</QuickButton>
-                        <QuickButton onClick={() => applyNumber('hp', Math.round(draft.hp * 5))}>HP x5</QuickButton>
-                        <QuickButton onClick={() => applyNumber('percentDamage', Math.round(draft.percentDamage * 2))}>Damage x2</QuickButton>
-                        <QuickButton onClick={() => applyNumber('percentTiemNang', Math.round(draft.percentTiemNang * 2))}>TNSM x2</QuickButton>
-                        <QuickButton onClick={() => applyNumber('speed', Math.round(draft.speed * 1.5))}>Speed +50%</QuickButton>
-                        <QuickButton onClick={() => applyNumber('rangeMove', Math.round(draft.rangeMove * 1.5))}>Range +50%</QuickButton>
-                      </div>
-                    </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <SectionCard title="Thông tin template quái" subtitle="Các chỉ số này áp dụng theo template. Spawn riêng từng map chỉnh trong panel Map.">
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                        <LabeledInput label="Tên quái" value={draft.name} onChange={(value) => saveDraft({ ...draft, name: value })} />
-                        <LabeledNumberInput label="HP" value={draft.hp} onChange={(value) => applyNumber('hp', value)} />
-                        <LabeledNumberInput label="Range move" value={draft.rangeMove} onChange={(value) => applyNumber('rangeMove', value)} />
-                        <LabeledNumberInput label="Speed" value={draft.speed} onChange={(value) => applyNumber('speed', value)} />
-                        <LabeledNumberInput label="Dart Type" value={draft.dartType} onChange={(value) => applyNumber('dartType', value)} />
-                        <LabeledNumberInput label="% Damage" value={draft.percentDamage} onChange={(value) => applyNumber('percentDamage', value)} />
-                        <LabeledNumberInput label="% Tiềm năng" value={draft.percentTiemNang} onChange={(value) => applyNumber('percentTiemNang', value)} />
-                        <ReadOnlyField label="TYPE gốc" value={String(selectedMob.type)} />
-                        <ReadOnlyField label="Tổng spawn" value={String(selectedMob.totalSpawnCount)} />
-                      </div>
-                    </SectionCard>
-
-                    <SectionCard
-                      title="Vật phẩm rơi"
-                      subtitle={`Drop riêng cho mob #${selectedMob.id}. Mỗi item là một rule độc lập; một lần giết có thể trúng nhiều rule.`}
-                    >
-                      <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] text-blue-800">
-                        Gõ <strong>tên vật phẩm</strong> hoặc <strong>ID</strong>. Panel lấy tên + icon trực tiếp từ Item database của JAR.
-                      </div>
-
-                      <div className="mt-3 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Boxes className="w-4 h-4 text-blue-600" />
-                          <div>
-                            <div className="text-[11px] font-semibold text-zinc-800">Danh sách item rơi</div>
-                            <div className="text-[9px] text-zinc-500">{dropRules.length} rule · search tên/ID · có ảnh preview</div>
+                  {/* Cột phải (Template editor, Drop rules, Map spawns) */}
+                  <div className="space-y-3 min-w-0">
+                    {/* Nhóm thông số template */}
+                    <div className={mobSubTab !== 'stats' ? 'hidden 2xl:block' : 'block'}>
+                      <SectionCard title="Thông tin template quái" subtitle="Các chỉ số này áp dụng theo template. Spawn riêng từng map chỉnh trong panel Map.">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                          <div className="sm:col-span-2 xl:col-span-1">
+                            <LabeledInput label="Tên quái" value={draft.name} onChange={(value) => saveDraft({ ...draft, name: value })} />
                           </div>
+                          <LabeledNumberInput label="HP" value={draft.hp} onChange={(value) => applyNumber('hp', value)} step={100} min={1} quickDeltas={[-100, 100, 1000]} />
+                          <LabeledNumberInput label="Range move" value={draft.rangeMove} onChange={(value) => applyNumber('rangeMove', value)} step={5} min={0} quickDeltas={[-5, 5, 20]} />
+                          <LabeledNumberInput label="Speed" value={draft.speed} onChange={(value) => applyNumber('speed', value)} step={1} min={1} quickDeltas={[-1, 1, 5]} />
+                          <LabeledNumberInput label="Dart Type" value={draft.dartType} onChange={(value) => applyNumber('dartType', value)} step={1} min={0} />
+                          <LabeledNumberInput label="% Damage" value={draft.percentDamage} onChange={(value) => applyNumber('percentDamage', value)} step={10} min={0} unit="%" quickDeltas={[-10, 10, 50]} />
+                          <LabeledNumberInput label="% Tiềm năng" value={draft.percentTiemNang} onChange={(value) => applyNumber('percentTiemNang', value)} step={10} min={0} unit="%" quickDeltas={[-10, 10, 50]} />
+                          <ReadOnlyField label="TYPE gốc" value={String(selectedMob.type)} />
+                          <ReadOnlyField label="Tổng spawn" value={String(selectedMob.totalSpawnCount)} />
                         </div>
-                        <button
-                          type="button"
-                          onClick={addDropRule}
-                          className="px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[10px] font-semibold text-blue-700 cursor-pointer flex items-center gap-1"
-                        >
-                          <PackagePlus className="w-3.5 h-3.5" />
-                          Thêm vật phẩm rơi
-                        </button>
-                      </div>
+                      </SectionCard>
+                    </div>
 
-                      {dropRules.length === 0 ? (
-                        <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/40 px-4 py-6 text-center text-[11px] text-blue-700">
-                          Mob #{selectedMob.id} chưa có custom drop.
+                    {/* Nhóm Vật phẩm rơi (Drop Rules) */}
+                    <div className={mobSubTab !== 'drops' ? 'hidden 2xl:block' : 'block'}>
+                      <SectionCard
+                        title="Vật phẩm rơi"
+                        subtitle={`Drop riêng cho mob #${selectedMob.id}. Mỗi item là một rule độc lập; một lần giết có thể trúng nhiều rule.`}
+                      >
+                        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-800">
+                          Gõ <strong>tên vật phẩm</strong> hoặc <strong>ID</strong>. Panel lấy tên + icon trực tiếp từ Item database của JAR.
                         </div>
-                      ) : (
-                        <div className="mt-3 space-y-2">
-                          {dropRules.map((rule) => (
-                            <DropRuleEditor
-                              key={rule.ruleId}
-                              session={session}
-                              rule={rule}
-                              itemLookup={itemLookup}
-                              saved={savedRuleId === rule.ruleId}
-                              onChange={(patch) => updateDropRule(rule.ruleId, patch)}
-                              onSave={() => saveDropRule(rule)}
-                              onDelete={() => removeDropRule(rule)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </SectionCard>
 
-                    <SectionCard title="Map xuất hiện" subtitle="Danh sách map đang có mob này spawn.">
-                      {selectedMob.maps.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[11px] text-zinc-500">Chưa thấy mob này trong dữ liệu spawn.</div>
-                      ) : (
-                        <div className="space-y-2">
-                          {selectedMob.maps.map((usage) => (
-                            <MapUsageCard key={`${selectedMob.id}-${usage.mapId}`} usage={usage} />
-                          ))}
+                        <div className="mt-3 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Boxes className="w-4 h-4 text-blue-600" />
+                            <div>
+                              <div className="text-[11px] font-semibold text-zinc-800">Danh sách item rơi</div>
+                              <div className="text-[9px] text-zinc-500">{dropRules.length} rule · search tên/ID · có ảnh preview</div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={addDropRule}
+                            className="h-8 px-3 rounded-lg border border-blue-300 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-xs font-semibold text-white cursor-pointer flex items-center gap-1 shadow-xs"
+                          >
+                            <PackagePlus className="w-3.5 h-3.5" />
+                            <span>Thêm item</span>
+                          </button>
                         </div>
-                      )}
-                    </SectionCard>
+
+                        {dropRules.length === 0 ? (
+                          <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/40 px-4 py-6 text-center text-[11px] text-blue-700">
+                            Mob #{selectedMob.id} chưa có custom drop. Nhấn "Thêm item" để tạo rule rơi đồ!
+                          </div>
+                        ) : (
+                          <div className="mt-3 space-y-2">
+                            {dropRules.map((rule) => (
+                              <DropRuleEditor
+                                key={rule.ruleId}
+                                session={session}
+                                rule={rule}
+                                itemLookup={itemLookup}
+                                saved={savedRuleId === rule.ruleId}
+                                onChange={(patch) => updateDropRule(rule.ruleId, patch)}
+                                onSave={() => saveDropRule(rule)}
+                                onDelete={() => removeDropRule(rule)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </SectionCard>
+                    </div>
+
+                    {/* Nhóm Map xuất hiện */}
+                    <div className={mobSubTab !== 'maps' ? 'hidden 2xl:block' : 'block'}>
+                      <SectionCard title="Map xuất hiện" subtitle="Danh sách map đang có mob này spawn.">
+                        {selectedMob.maps.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[11px] text-zinc-500">Chưa thấy mob này trong dữ liệu spawn.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {selectedMob.maps.map((usage) => (
+                              <MapUsageCard key={`${selectedMob.id}-${usage.mapId}`} usage={usage} />
+                            ))}
+                          </div>
+                        )}
+                      </SectionCard>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -676,14 +792,23 @@ function DropRuleEditor({
 
       <div className="mt-2 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] gap-2">
         <LabeledInput label="Ghi chú" value={rule.note || ''} onChange={(value) => onChange({ note: value })} placeholder="Ghi chú cho rule này" />
-        <div className="flex items-end gap-1.5">
-          <button type="button" onClick={onSave} className="px-3 py-2 rounded-lg border border-blue-200 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1">
-            {saved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            {saved ? 'Đã lưu' : 'Lưu'}
+        <div className="flex items-end gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onSave}
+            className="flex-1 sm:flex-none h-10 sm:h-8.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-xs font-semibold cursor-pointer flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-95"
+          >
+            {saved ? <CheckCircle2 className="w-4 h-4 text-white" /> : <Save className="w-4 h-4 text-white" />}
+            <span>{saved ? 'Đã lưu rule' : 'Lưu rule'}</span>
           </button>
-          <button type="button" onClick={onDelete} className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
-            <Trash2 className="w-3.5 h-3.5" />
-            Xóa
+          <button
+            type="button"
+            onClick={onDelete}
+            className="h-10 sm:h-8.5 px-3 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-700 text-xs font-semibold cursor-pointer flex items-center justify-center gap-1 transition-all active:scale-95"
+            title="Xóa rule rơi này"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span className="sm:hidden">Xóa</span>
           </button>
         </div>
       </div>
@@ -827,21 +952,171 @@ function SectionCard({ title, subtitle, children }: { title: string; subtitle?: 
   );
 }
 
-function LabeledInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+function LabeledInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
   return (
-    <label className="block">
-      <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[16px] sm:text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 font-mono" />
-    </label>
+    <div className="space-y-1">
+      <div className="text-[11px] font-semibold text-zinc-700 font-mono">{label}</div>
+      <div className="relative flex items-center">
+        <input
+          type="text"
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          className="w-full h-10 sm:h-8.5 px-3 pr-8 rounded-lg border border-zinc-300 bg-white text-[16px] sm:text-xs text-zinc-900 font-mono font-medium focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 shadow-2xs transition-colors"
+        />
+        {value !== '' && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute right-2 text-zinc-400 hover:text-zinc-700 text-sm font-bold p-1 cursor-pointer"
+            title="Xóa nội dung"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
-function LabeledNumberInput({ label, value, onChange, step }: { label: string; value: number; onChange: (value: number) => void; step?: string }) {
+function LabeledNumberInput({
+  label,
+  value,
+  onChange,
+  step = 1,
+  min = 0,
+  max = JAVA_INT_MAX,
+  quickDeltas,
+  unit,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  step?: string | number;
+  min?: number;
+  max?: number;
+  quickDeltas?: number[];
+  unit?: string;
+}) {
+  const numStep = typeof step === 'string' ? parseFloat(step) || 1 : step;
+  const [text, setText] = useState(() => (Number.isFinite(value) ? String(value) : '0'));
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setText(Number.isFinite(value) ? String(value) : '0');
+    }
+  }, [value, isFocused]);
+
+  const commitValue = (valStr: string) => {
+    const trimmed = valStr.trim();
+    if (trimmed === '' || trimmed === '-') {
+      setText(String(min));
+      onChange(min);
+      return;
+    }
+    const num = Number(trimmed);
+    if (!Number.isFinite(num)) {
+      setText(String(value));
+      return;
+    }
+    const clamped = Math.max(min, Math.min(max, num));
+    setText(String(clamped));
+    onChange(clamped);
+  };
+
+  const adjustBy = (delta: number) => {
+    const current = Number(text);
+    const base = Number.isFinite(current) ? current : value;
+    const next = Math.max(min, Math.min(max, Math.round((base + delta) * 100) / 100));
+    setText(String(next));
+    onChange(next);
+  };
+
   return (
-    <label className="block">
-      <div className="text-[10px] text-zinc-500 mb-1 font-mono">{label}</div>
-      <input type="number" step={step} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} className="w-full px-3 py-2.5 sm:py-2 rounded-lg border border-zinc-200 bg-zinc-50 text-[16px] sm:text-[11px] text-zinc-900 focus:outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 font-mono" />
-    </label>
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <label className="text-[11px] font-semibold text-zinc-700 font-mono flex items-center gap-1">
+          <span>{label}</span>
+          {unit && <span className="text-[10px] text-zinc-400 font-normal">({unit})</span>}
+        </label>
+        {quickDeltas && quickDeltas.length > 0 && (
+          <div className="flex items-center gap-1">
+            {quickDeltas.map((delta) => (
+              <button
+                key={delta}
+                type="button"
+                onClick={() => adjustBy(delta)}
+                className="px-1.5 py-0.2 rounded bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 text-[10px] font-mono font-medium cursor-pointer transition-colors active:scale-95"
+              >
+                {delta > 0 ? `+${delta}` : delta}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="relative flex items-center shadow-2xs rounded-lg overflow-hidden border border-zinc-300 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-100">
+        {/* Nút giảm */}
+        <button
+          type="button"
+          onClick={() => adjustBy(-numStep)}
+          disabled={value <= min}
+          className="h-10 sm:h-8.5 px-3 bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-bold text-sm flex items-center justify-center cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0 select-none border-r border-zinc-300"
+          title={`Giảm ${numStep}`}
+        >
+          -
+        </button>
+
+        {/* Input gõ trực tiếp */}
+        <input
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={text}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => {
+            setIsFocused(false);
+            commitValue(text);
+          }}
+          onChange={(e) => {
+            const val = e.target.value;
+            setText(val);
+            const num = Number(val);
+            if (val.trim() !== '' && Number.isFinite(num)) {
+              onChange(Math.max(min, Math.min(max, num)));
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          className="w-full h-10 sm:h-8.5 px-2 bg-white text-[16px] sm:text-xs text-zinc-900 font-mono font-semibold focus:outline-none text-center"
+        />
+
+        {/* Nút tăng */}
+        <button
+          type="button"
+          onClick={() => adjustBy(numStep)}
+          disabled={value >= max}
+          className="h-10 sm:h-8.5 px-3 bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-bold text-sm flex items-center justify-center cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0 select-none border-l border-zinc-300"
+          title={`Tăng ${numStep}`}
+        >
+          +
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -863,8 +1138,8 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
   );
 }
 
-function Chip({ children }: { children: React.ReactNode }) {
-  return <span className="px-2 py-0.5 rounded-full bg-zinc-50 border border-zinc-200 text-zinc-600 text-[10px] font-mono">{children}</span>;
+function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <span className={`px-2 py-0.5 rounded-full bg-zinc-50 border border-zinc-200 text-zinc-600 text-[10px] font-mono ${className ?? ''}`}>{children}</span>;
 }
 
 function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

@@ -331,9 +331,9 @@ export const AppTabNavigation: React.FC<AppTabNavigationProps> = ({
     <>
       <div id="tab-navigation-root" className="shrink-0 flex flex-col gap-1.5 w-full">
         {/* ========================================================= */}
-        {/* 1. HÀNG ĐIỀU HƯỚNG CHÍNH (Desktop & Mobile)                */}
+        {/* 1. HÀNG ĐIỀU HƯỚNG CHÍNH (Chỉ hiển thị trên Desktop md+)   */}
         {/* ========================================================= */}
-        <div className="flex items-center justify-between gap-1.5 bg-white p-1 rounded-xl border border-zinc-200 shadow-2xs">
+        <div className="hidden md:flex items-center justify-between gap-1.5 bg-white p-1 rounded-xl border border-zinc-200 shadow-2xs">
           {/* Nhóm nút chọn Category / Phân hệ chính */}
           <div className="flex items-center gap-1 min-w-0">
             {categoryDefs.map((cat) => {
@@ -437,11 +437,12 @@ export const AppTabNavigation: React.FC<AppTabNavigationProps> = ({
         {/* ========================================================= */}
         {/* 2. DẢI TAB CON (SUB-TABS) HOẶC DẢI TOÀN BỘ TAB             */}
         {/* ========================================================= */}
+        <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-zinc-200 shadow-2xs">
         {desktopViewMode === 'grouped' ? (
           /* Chế độ Theo Nhóm: Hiển thị các tab thuộc phân hệ đang chọn */
           <div
             ref={subTabScrollRef}
-            className="flex items-center gap-1 bg-white p-1 rounded-xl border border-zinc-200 overflow-x-auto shadow-2xs scrollbar-none scroll-smooth touch-pan-x"
+            className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto scrollbar-none scroll-smooth touch-pan-x"
             style={{ WebkitOverflowScrolling: 'touch' }}
           >
             <div className="shrink-0 px-2 py-1 text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-400 border-r border-zinc-200 mr-0.5 flex items-center gap-1">
@@ -562,6 +563,36 @@ export const AppTabNavigation: React.FC<AppTabNavigationProps> = ({
             })}
           </div>
         )}
+
+          {/* Nút hành động nhanh trên Mobile */}
+          <div className="flex md:hidden items-center gap-1 shrink-0 pl-1 border-l border-zinc-200">
+            {totalDirtyDrafts > 0 && (
+              <button
+                type="button"
+                onClick={onTestDraft}
+                disabled={isBuildingDraftTest}
+                className="h-8 px-2 rounded-lg bg-violet-600 text-white font-mono font-bold text-[11px] flex items-center gap-1 active:scale-95 shadow-xs"
+                title={`Chạy thử ${totalDirtyDrafts} nháp`}
+              >
+                {isBuildingDraftTest ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                ) : (
+                  <PlayCircle className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>{totalDirtyDrafts}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowAllTabsSheet(true)}
+              className="h-8 px-2 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs flex items-center gap-1 active:scale-95"
+              title="Mở toàn bộ 12 tab"
+            >
+              <Grid className="w-3.5 h-3.5 text-zinc-600" />
+              <span className="text-[10px] font-mono font-bold text-zinc-500">12</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ========================================================= */}

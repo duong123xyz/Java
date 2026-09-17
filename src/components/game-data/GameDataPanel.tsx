@@ -87,6 +87,7 @@ export function GameDataPanel({ session, onNpcDraftsUpdated }: GameDataPanelProp
   const [query, setQuery] = useState('');
   const [shopFilter, setShopFilter] = useState<ShopFilter>('all');
   const [selectedNpcId, setSelectedNpcId] = useState<string | null>(null);
+  const [mobileTab, setMobileTab] = useState<'list' | 'detail'>('list');
   const sessionWithGameDrafts = session as GameDataSession;
   const [npcDrafts, setNpcDrafts] = useState<Record<string, NpcQuickDraft>>(
     () => sessionWithGameDrafts.gameNpcDrafts ?? {}
@@ -325,8 +326,39 @@ export function GameDataPanel({ session, onNpcDraftsUpdated }: GameDataPanelProp
         </div>
       </div>
 
+      {/* Segmented bar trên Mobile */}
+      <div className="flex xl:hidden items-center gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-xl shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileTab('list')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+            mobileTab === 'list'
+              ? 'bg-cyan-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Danh sách ({filteredNpcs.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('detail')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+            mobileTab === 'detail'
+              ? 'bg-cyan-600 text-white font-bold shadow-xs'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <span className="truncate max-w-[150px]">
+            {selectedNpc ? (npcDrafts[selectedNpc.id]?.name || selectedNpc.name) : 'Chi tiết NPC'}
+          </span>
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <div className="xl:col-span-4 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden">
+        <div className={`xl:col-span-4 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col ${
+          mobileTab === 'detail' ? 'hidden xl:flex' : 'flex'
+        }`}>
           <div className="p-3 border-b border-zinc-800 bg-zinc-950/50 space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="font-bold text-sm text-zinc-100 flex items-center gap-2">
@@ -345,7 +377,7 @@ export function GameDataPanel({ session, onNpcDraftsUpdated }: GameDataPanelProp
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tìm theo ID, tên NPC, tên item shop..."
-                className="w-full bg-zinc-950 border border-zinc-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-cyan-600 font-mono"
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-lg pl-8 pr-3 py-2 sm:py-1.5 text-[16px] sm:text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-cyan-600 font-mono"
               />
             </div>
 
@@ -395,7 +427,10 @@ export function GameDataPanel({ session, onNpcDraftsUpdated }: GameDataPanelProp
                     return (
                       <tr
                         key={`${npc.id}-${npc.rowIndex}`}
-                        onClick={() => setSelectedNpcId(npc.id)}
+                        onClick={() => {
+                          setSelectedNpcId(npc.id);
+                          setMobileTab('detail');
+                        }}
                         className={`cursor-pointer transition-colors ${
                           selected
                             ? 'bg-cyan-500/10 border-l-2 border-cyan-400'
@@ -448,7 +483,24 @@ export function GameDataPanel({ session, onNpcDraftsUpdated }: GameDataPanelProp
           </div>
         </div>
 
-        <div className="xl:col-span-8 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden">
+        <div className={`xl:col-span-8 bg-zinc-900/80 border border-zinc-800 rounded-xl overflow-hidden flex flex-col ${
+          mobileTab === 'list' ? 'hidden xl:flex' : 'flex'
+        }`}>
+          {/* Header quay lại trên mobile */}
+          <div className="xl:hidden px-3 py-2 bg-zinc-850 border-b border-zinc-800 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setMobileTab('list')}
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4 rotate-180" />
+              <span>← Trở lại danh sách</span>
+            </button>
+            <span className="text-xs font-mono text-zinc-400 truncate max-w-[150px]">
+              {selectedNpc ? (npcDrafts[selectedNpc.id]?.name || selectedNpc.name) : ''}
+            </span>
+          </div>
+
           {selectedNpc ? (
             <NpcDetail
               npc={selectedNpc}
@@ -729,14 +781,14 @@ function NpcDetail({
                 <div className="text-[10px] text-zinc-500 font-mono">
                   {isDirty ? 'Có thay đổi so với JAR gốc.' : 'Dữ liệu đang khớp JAR gốc.'}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto">
                   <button
                     type="button"
                     onClick={() => {
                       setDraft(originalDraft);
                       onDiscardDraft();
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs font-mono cursor-pointer transition-colors"
+                    className="flex-1 sm:flex-none h-10 sm:h-8.5 px-3 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs font-mono font-medium cursor-pointer transition-colors flex items-center justify-center"
                   >
                     Hoàn tác về gốc
                   </button>
@@ -744,7 +796,7 @@ function NpcDetail({
                     type="button"
                     disabled={!canSaveDraft || !isDirty}
                     onClick={() => onSaveDraft({ ...draft })}
-                    className="px-3.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:border-zinc-700 text-white border border-cyan-500 text-xs font-bold font-mono cursor-pointer disabled:cursor-not-allowed transition-colors"
+                    className="flex-1 sm:flex-none h-10 sm:h-8.5 px-4 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:border-zinc-700 text-white border border-cyan-500 text-xs font-bold font-mono cursor-pointer disabled:cursor-not-allowed transition-colors flex items-center justify-center"
                   >
                     Lưu nháp (RAM)
                   </button>
@@ -809,12 +861,12 @@ function QuickEditField({
   numeric?: boolean;
 }) {
   return (
-    <label className="block rounded-lg bg-zinc-950/70 border border-zinc-800 p-2.5 space-y-1.5">
+    <div className="rounded-xl bg-zinc-950/70 border border-zinc-800 p-2.5 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-mono font-semibold">
+        <span className="text-[11px] uppercase tracking-wider text-zinc-300 font-mono font-bold">
           {label}
         </span>
-        <span className="text-[9px] text-zinc-700 font-mono">{technical}</span>
+        <span className="text-[9px] text-zinc-500 font-mono">{technical}</span>
       </div>
       <div className="flex items-center gap-1.5">
         {numeric && !disabled && (
@@ -824,10 +876,10 @@ function QuickEditField({
               const current = /^\d+$/.test(value.trim()) ? Number.parseInt(value, 10) : 0;
               onChange?.(String(Math.max(0, current - 1)));
             }}
-            className="w-7 h-7 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono cursor-pointer"
+            className="h-10 sm:h-8.5 px-3 rounded-lg bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold font-mono cursor-pointer shrink-0"
             title={`Giảm ${label} 1 đơn vị`}
           >
-            −
+            -
           </button>
         )}
         <input
@@ -835,12 +887,12 @@ function QuickEditField({
           value={value}
           disabled={disabled}
           onChange={(event) => onChange?.(event.target.value)}
-          className={`min-w-0 flex-1 rounded-md px-2.5 py-1.5 text-xs font-mono focus:outline-none border ${
+          className={`min-w-0 flex-1 h-10 sm:h-8.5 rounded-lg px-3 text-[16px] sm:text-xs font-mono font-medium focus:outline-none border transition-colors ${
             invalid
               ? 'bg-red-950/30 border-red-700 text-red-200 focus:border-red-500'
               : disabled
               ? 'bg-zinc-900/70 border-zinc-800 text-zinc-500 cursor-not-allowed'
-              : 'bg-zinc-900 border-zinc-700 text-zinc-100 focus:border-cyan-500'
+              : 'bg-zinc-900 border-zinc-700 text-zinc-100 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20'
           }`}
         />
         {numeric && !disabled && (
@@ -850,15 +902,15 @@ function QuickEditField({
               const current = /^\d+$/.test(value.trim()) ? Number.parseInt(value, 10) : 0;
               onChange?.(String(current + 1));
             }}
-            className="w-7 h-7 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono cursor-pointer"
+            className="h-10 sm:h-8.5 px-3 rounded-lg bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold font-mono cursor-pointer shrink-0"
             title={`Tăng ${label} 1 đơn vị`}
           >
             +
           </button>
         )}
       </div>
-      {helper && <div className="text-[9px] text-zinc-600 font-mono">{helper}</div>}
-    </label>
+      {helper && <div className="text-[10px] text-zinc-500 font-mono">{helper}</div>}
+    </div>
   );
 }
 
